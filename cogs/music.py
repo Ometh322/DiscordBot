@@ -1,4 +1,4 @@
-"""Слэш-команды поиска и воспроизведения GACHI-музыки из ВК."""
+"""Слэш-команды поиска и воспроизведения GACHI-музыки из SoundCloud."""
 
 import asyncio
 import logging
@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.player import PlayerManager, fmt_duration
-from services.vk import VkMusic, VkMusicError
+from services.soundcloud import SoundCloud, SoundCloudError
 
 log = logging.getLogger(__name__)
 
@@ -16,12 +16,12 @@ log = logging.getLogger(__name__)
 class Music(commands.Cog):
     def __init__(self, bot: discord.Client):
         self.bot = bot
-        self.vk = VkMusic()
-        self.players = PlayerManager(bot, self.vk)
+        self.sc = SoundCloud()
+        self.players = PlayerManager(bot, self.sc)
 
     # ---- /gachi ----
 
-    @app_commands.command(name="gachi", description="Найти GACHI-трек в ВК и поставить")
+    @app_commands.command(name="gachi", description="Найти GACHI-трек на SoundCloud и поставить")
     @app_commands.describe(query="Что искать (например: gachi remix, Gymnasium…)")
     @app_commands.guild_only()
     async def gachi(self, interaction: discord.Interaction, query: str):
@@ -31,18 +31,18 @@ class Music(commands.Cog):
             )
             return
 
-        await interaction.response.defer()  # поиск в ВК занимает пару секунд
+        await interaction.response.defer()  # поиск занимает пару секунд
         player = self.players.get(interaction.guild)
         player.text_channel = interaction.channel
 
         try:
-            tracks = await asyncio.to_thread(self.vk.search, query)
+            tracks = await asyncio.to_thread(self.sc.search, query)
             if not tracks:  # запасной проход: добавляем gachi к запросу
                 tracks = await asyncio.to_thread(
-                    self.vk.search, f"{query} gachi", gachi_only=False
+                    self.sc.search, f"{query} gachi", gachi_only=False
                 )
-        except VkMusicError as e:
-            await interaction.followup.send(f"❌ VK недоступен: {e}")
+        except SoundCloudError as e:
+            await interaction.followup.send(f"❌ SoundCloud недоступен: {e}")
             return
 
         if not tracks:
@@ -70,12 +70,12 @@ class Music(commands.Cog):
         position = await player.enqueue(track, announce_start=False)
 
         embed = discord.Embed(title=track.title or "Без названия")
-        embed.set_author(name="Найдено в ВК")
+        embed.set_author(name="Найдено на SoundCloud")
         embed.add_field(name="Исполнитель", value=track.artist or "—", inline=True)
         embed.add_field(
             name="Длительность", value=fmt_duration(track.duration), inline=True
         )
-        embed.url = track.vk_url
+        embed.url = track.page_url
         if position == 1:
             await interaction.followup.send("▶ Играю", embed=embed)
         else:

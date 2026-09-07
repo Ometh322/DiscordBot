@@ -11,7 +11,7 @@ from typing import List, Optional
 import discord
 
 import config
-from services.vk import Track, VkMusic, VkMusicError
+from services.soundcloud import SoundCloud, SoundCloudError, Track
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +28,10 @@ def fmt_duration(seconds: int) -> str:
 class GuildPlayer:
     """Состояние плеера одной гильдии: очередь, текущий трек, автовыход."""
 
-    def __init__(self, bot: discord.Client, guild: discord.Guild, vk: VkMusic):
+    def __init__(self, bot: discord.Client, guild: discord.Guild, sc: SoundCloud):
         self.bot = bot
         self.guild = guild
-        self.vk = vk
+        self.sc = sc
         self.queue: List[Track] = []
         self.current: Optional[Track] = None
         self.text_channel: Optional[discord.abc.Messageable] = None
@@ -95,7 +95,7 @@ class GuildPlayer:
 
             track = self.queue.pop(0)
             try:
-                url = await asyncio.to_thread(self.vk.fresh_url, track)
+                url = await asyncio.to_thread(self.sc.fresh_url, track)
                 source = discord.FFmpegPCMAudio(
                     url,
                     executable=config.FFMPEG_PATH,
@@ -104,8 +104,8 @@ class GuildPlayer:
             except TrackUnavailable as e:
                 await self._notify(f"⚠️ Пропускаю: {e}")
                 continue
-            except VkMusicError as e:
-                await self._notify(f"⚠️ VK недоступен, пропускаю трек: {e}")
+            except SoundCloudError as e:
+                await self._notify(f"⚠️ SoundCloud недоступен, пропускаю трек: {e}")
                 continue
             except Exception:
                 log.exception("Ошибка подготовки трека %s", track.full_id)
@@ -152,7 +152,7 @@ class GuildPlayer:
         embed = discord.Embed(title="▶ Сейчас играет", description=f"**{t.title}**")
         embed.add_field(name="Исполнитель", value=t.artist or "—")
         embed.set_footer(text=f"Длительность: {fmt_duration(t.duration)}")
-        embed.url = t.vk_url
+        embed.url = t.page_url
         try:
             await self.text_channel.send(embed=embed)
         except (discord.HTTPException, AttributeError):
@@ -183,14 +183,14 @@ class GuildPlayer:
 
 
 class PlayerManager:
-    def __init__(self, bot: discord.Client, vk: VkMusic):
+    def __init__(self, bot: discord.Client, sc: SoundCloud):
         self.bot = bot
-        self.vk = vk
+        self.sc = sc
         self._players = {}
 
     def get(self, guild: discord.Guild) -> GuildPlayer:
         player = self._players.get(guild.id)
         if player is None:
-            player = GuildPlayer(self.bot, guild, self.vk)
+            player = GuildPlayer(self.bot, guild, self.sc)
             self._players[guild.id] = player
         return player

@@ -1,4 +1,4 @@
-"""Живой тест Этапа 1 без Discord: поиск -> свежая ссылка -> декод FFmpeg.
+"""Живой тест без Discord: поиск SoundCloud -> свежая ссылка -> декод FFmpeg.
 
 Запуск:
     venv\\Scripts\\python scripts\\test_music_core.py
@@ -11,32 +11,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from services.vk import VkMusic, is_gachi
+from services.soundcloud import SoundCloud, is_gachi
 
 
 def main() -> None:
-    vk = VkMusic()
+    sc = SoundCloud()
 
-    tracks = vk.search("gachi", count=50)
-    print(f"1) audio.search 'gachi': {len(tracks)} треков прошли фильтр GACHI/ГАЧИ")
+    tracks = sc.search("gachi", count=20)
+    print(f"1) scsearch 'gachi': {len(tracks)} треков прошли фильтр GACHI/ГАЧИ")
     for t in tracks[:5]:
         print(f"   - {t.name}  [{t.duration} c]  id={t.full_id}")
     if not tracks:
-        print("   Фильтр ничего не оставил — проверь токен/запрос.")
+        print("   Фильтр ничего не оставил — проверь сеть/доступ к SoundCloud.")
         sys.exit(1)
     assert all(is_gachi(t) for t in tracks), "фильтр пропустил не-GACHI трек"
 
     track = tracks[0]
-    url = vk.fresh_url(track)
+    url = sc.fresh_url(track)
     host = url.split("/")[2]
-    print(f"2) fresh_url: получил mp3-ссылку (хост {host}, длина {len(url)} символов)")
+    print(f"2) fresh_url: получил ссылку на поток (хост {host}, длина {len(url)})")
 
     result = subprocess.run(
         [
             config.FFMPEG_PATH,
             "-hide_banner",
             "-loglevel", "error",
-            "-connect_timeout", "10",
             "-i", url,
             "-t", "3",          # декодируем 3 секунды
             "-f", "null",

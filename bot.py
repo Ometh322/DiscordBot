@@ -58,9 +58,6 @@ def main() -> None:
     if not config.DISCORD_TOKEN:
         log.error("DISCORD_TOKEN не задан. Заполни .env (см. .env.example).")
         sys.exit(1)
-    if not config.VK_TOKEN:
-        log.warning("VK_TOKEN не задан — /gachi будет отвечать ошибкой "
-                    "(получить: scripts\\get_vk_token.py)")
 
     try:
         bot.run(config.DISCORD_TOKEN, log_handler=None)
