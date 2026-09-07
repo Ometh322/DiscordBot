@@ -2,15 +2,23 @@
 
 import asyncio
 import logging
+import random
+from collections import deque
+from typing import Literal
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from services.player import PlayerManager, fmt_duration
-from services.soundcloud import SoundCloud, SoundCloudError
+from services.soundcloud import SEARCH_QUERIES, SoundCloud, SoundCloudError
 
 log = logging.getLogger(__name__)
+
+# Сколько последних треков сервера не повторять при случайной выборке
+RECENT_MAX = 60
+# Случайная страница выдачи для разнообразия
+SEARCH_OFFSETS = (0, 10, 20, 30)
 
 
 class Music(commands.Cog):
@@ -18,41 +26,74 @@ class Music(commands.Cog):
         self.bot = bot
         self.sc = SoundCloud()
         self.players = PlayerManager(bot, self.sc)
+        self._recent = {}  # guild_id -> deque[track_id] (история против повторов)
 
     # ---- /gachi ----
 
-    @app_commands.command(name="gachi", description="Найти GACHI-трек на SoundCloud и поставить")
-    @app_commands.describe(query="Что искать (например: gachi remix, Gymnasium…)")
+    @app_commands.command(
+        name="gachi",
+        description="Добавить случайные GACHI-треки в очередь",
+    )
+    @app_commands.describe(
+        language="Язык: ru — искать «гачи…», ang — искать «gachi…»",
+        count="Сколько треков добавить (1–10)",
+    )
     @app_commands.guild_only()
-    async def gachi(self, interaction: discord.Interaction, query: str):
+    async def gachi(
+        self,
+        interaction: discord.Interaction,
+        language: Literal["ru", "ang"],
+        count: app_commands.Range[int, 1, 10] = 3,
+    ):
         if not interaction.user.voice or not interaction.user.voice.channel:
             await interaction.response.send_message(
                 "Зайди в голосовой канал — я подключусь к тебе 🎧", ephemeral=True
             )
             return
 
-        await interaction.response.defer()  # поиск занимает пару секунд
+        await interaction.response.defer()
         player = self.players.get(interaction.guild)
         player.text_channel = interaction.channel
+        recent = self._recent.setdefault(
+            interaction.guild_id, deque(maxlen=RECENT_MAX)
+        )
 
-        try:
-            tracks = await asyncio.to_thread(self.sc.search, query)
-            if not tracks:  # запасной проход: добавляем gachi к запросу
-                tracks = await asyncio.to_thread(
-                    self.sc.search, f"{query} gachi", gachi_only=False
-                )
-        except SoundCloudError as e:
-            await interaction.followup.send(f"❌ SoundCloud недоступен: {e}")
+        # Случайные вариации запроса + случайная страница выдачи; поиск параллельно
+        pool = SEARCH_QUERIES["ru" if language == "ru" else "ang"]
+        queries = random.sample(pool, k=min(2, len(pool)))
+        offset = random.choice(SEARCH_OFFSETS)
+
+        results = await asyncio.gather(
+            *(
+                asyncio.to_thread(self.sc.search, q, count=20, offset=offset)
+                for q in queries
+            ),
+            return_exceptions=True,
+        )
+        candidates, last_error = [], None
+        for res in results:
+            if isinstance(res, BaseException):
+                last_error = res
+                continue
+            candidates.extend(res)
+
+        # Дедупликация + отсев недавно игравшего
+        unique = {}
+        for t in candidates:
+            unique.setdefault(t.full_id, t)
+        fresh = [t for t in unique.values() if t.full_id not in recent]
+        if not fresh and unique:  # всё уже играло — лучше повтор, чем пустота
+            fresh = list(unique.values())
+        random.shuffle(fresh)
+        picked = fresh[:count]
+
+        if not picked:
+            msg = f"❌ SoundCloud недоступен: {last_error}" if last_error \
+                else "Не нашлось GACHI-треков, попробуй ещё раз 🤷"
+            await interaction.followup.send(msg)
             return
 
-        if not tracks:
-            await interaction.followup.send(
-                f"По запросу «{query}» ничего GACHI/ГАЧИ не нашлось 🤷"
-            )
-            return
-        track = tracks[0]
-
-        # подключаемся к каналу автора
+        # Подключаемся к каналу автора
         channel = interaction.user.voice.channel
         vc = interaction.guild.voice_client
         try:
@@ -67,21 +108,21 @@ class Music(commands.Cog):
         except discord.ClientException:
             log.exception("Подключение к %s", channel)
 
-        position = await player.enqueue(track, announce_start=False)
+        for t in picked:
+            recent.append(t.full_id)
+            await player.enqueue(t)
 
-        embed = discord.Embed(title=track.title or "Без названия")
-        embed.set_author(name="Найдено на SoundCloud")
-        embed.add_field(name="Исполнитель", value=track.artist or "—", inline=True)
-        embed.add_field(
-            name="Длительность", value=fmt_duration(track.duration), inline=True
+        lines = [
+            f"{i}. **{t.title}** — {t.artist} ({fmt_duration(t.duration)})"
+            for i, t in enumerate(picked, start=1)
+        ]
+        embed = discord.Embed(
+            title=f"🎶 Добавлено: {len(picked)} "
+                  f"({'гачи' if language == 'ru' else 'gachi'})",
+            description="\n".join(lines),
         )
-        embed.url = track.page_url
-        if position == 1:
-            await interaction.followup.send("▶ Играю", embed=embed)
-        else:
-            await interaction.followup.send(
-                f"➕ В очереди (позиция {position})", embed=embed
-            )
+        await interaction.followup.send("▶ Первый уже играет" if len(picked) > 1
+                                       else "▶ Играю", embed=embed)
 
     # ---- /skip ----
 

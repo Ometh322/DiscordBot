@@ -8,7 +8,6 @@ asyncio.to_thread.
 
 import logging
 import re
-import threading
 from dataclasses import dataclass
 from typing import List
 
@@ -18,6 +17,15 @@ log = logging.getLogger(__name__)
 
 GACHI_RE = re.compile(r"gachi|гачи", re.IGNORECASE)
 
+# Вариации запросов для случайной выборки по языку
+SEARCH_QUERIES = {
+    "ru": ["гачи", "гачи ремикс", "гачи микс", "гачи музыка", "гачи фонк"],
+    "ang": [
+        "gachi", "gachi remix", "gachimuchi", "gachi mix",
+        "gachi mashup", "gachi phonk", "gachi bass boosted",
+    ],
+}
+
 YDL_OPTS = {
     "quiet": True,
     "no_warnings": True,
@@ -25,6 +33,10 @@ YDL_OPTS = {
     "socket_timeout": 20,
     "retries": 2,
 }
+
+# Плоский поиск: один API-запрос, без извлечения потоков для каждого трека
+# (полное извлечение происходит только в fresh_url для играющего трека)
+YDL_SEARCH_OPTS = {**YDL_OPTS, "extract_flat": "in_playlist"}
 
 
 class SoundCloudError(Exception):
@@ -71,10 +83,12 @@ def is_gachi(track: Track) -> bool:
 
 
 class SoundCloud:
-    """Синхронный клиент; вызовы сериализуются локом."""
+    """Синхронный клиент. Каждый вызов создаёт свой YoutubeDL, поэтому
+    параллельные вызовы из нескольких потоков безопасны (client_id
+    кэшируется на уровне класса yt-dlp)."""
 
     def __init__(self):
-        self._lock = threading.Lock()
+        pass
 
     def search(
         self,
@@ -83,15 +97,18 @@ class SoundCloud:
         offset: int = 0,
         gachi_only: bool = True,
     ) -> List[Track]:
-        """Ищет треки; при gachi_only оставляет только GACHI/ГАЧИ в названии."""
-        opts = dict(YDL_OPTS)
+        """Ищет треки; при gachi_only оставляет только GACHI/ГАЧИ в названии.
+
+        Плоский поиск — быстро (один запрос); потоки не извлекаются."""
+        opts = dict(YDL_SEARCH_OPTS)
+        opts["playlistend"] = offset + count
         if offset:
             opts["playliststart"] = offset + 1
-        opts["playlistend"] = offset + max(count, 5)  # scsearch отдаёт фиксированно
         try:
-            with self._lock:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(f"scsearch{count}:{query}", download=False)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    f"scsearch{offset + count}:{query}", download=False
+                )
         except yt_dlp.utils.DownloadError as e:
             log.warning("SoundCloud search '%s' -> %s", query, e)
             raise ScUnavailable(f"поиск недоступен ({str(e)[:120]})") from e
@@ -107,9 +124,8 @@ class SoundCloud:
         if not track.page_url:
             raise TrackUnavailable(f"нет ссылки на трек ({track.name})")
         try:
-            with self._lock:
-                with yt_dlp.YoutubeDL({**YDL_OPTS, "format": "bestaudio/best"}) as ydl:
-                    info = ydl.extract_info(track.page_url, download=False)
+            with yt_dlp.YoutubeDL({**YDL_OPTS, "format": "bestaudio/best"}) as ydl:
+                info = ydl.extract_info(track.page_url, download=False)
         except yt_dlp.utils.DownloadError as e:
             msg = str(e)
             if "403" in msg or "404" in msg or "unavailable" in msg.lower():
