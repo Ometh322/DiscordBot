@@ -28,6 +28,78 @@ class Music(commands.Cog):
         self.players = PlayerManager(bot, self.sc)
         self._recent = {}  # guild_id -> deque[track_id] (история против повторов)
 
+    # ---- вспомогательное ----
+
+    async def _connect_to_author(self, interaction: discord.Interaction) -> bool:
+        """Подключает бота к каналу автора команды. False — если отказали."""
+        channel = interaction.user.voice.channel
+        vc = interaction.guild.voice_client
+        try:
+            if vc is None:
+                await channel.connect()
+            elif vc.channel != channel:
+                await interaction.followup.send(
+                    f"Я сейчас в другом канале ({vc.channel.mention}) — "
+                    "подойди туда или попроси /leave."
+                )
+                return False
+        except discord.ClientException:
+            log.exception("Подключение к %s", channel)
+            return False
+        return True
+
+    # ---- /play ----
+
+    @app_commands.command(
+        name="play",
+        description="Найти любой трек на SoundCloud и поставить в очередь",
+    )
+    @app_commands.describe(query="Что искать (название / исполнитель)")
+    @app_commands.guild_only()
+    async def play(self, interaction: discord.Interaction, query: str):
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.response.send_message(
+                "Зайди в голосовой канал — я подключусь к тебе 🎧", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        player = self.players.get(interaction.guild)
+        player.text_channel = interaction.channel
+
+        try:
+            tracks = await asyncio.to_thread(
+                self.sc.search, query, count=10, gachi_only=False
+            )
+        except SoundCloudError as e:
+            await interaction.followup.send(f"❌ SoundCloud недоступен: {e}")
+            return
+
+        if not tracks:
+            await interaction.followup.send(
+                f"По запросу «{query}» ничего не нашлось 🤷"
+            )
+            return
+        track = tracks[0]
+
+        if not await self._connect_to_author(interaction):
+            return
+
+        position = await player.enqueue(track, announce_start=False)
+
+        embed = discord.Embed(title=track.title or "Без названия")
+        embed.set_author(name="Найдено на SoundCloud")
+        embed.add_field(name="Исполнитель", value=track.artist or "—", inline=True)
+        embed.add_field(
+            name="Длительность", value=fmt_duration(track.duration), inline=True
+        )
+        embed.url = track.page_url
+        await interaction.followup.send(
+            "▶ Играю" if position == 1 else f"➕ В очереди (позиция {position})",
+            embed=embed,
+            view=PlayerControls(player),
+        )
+
     # ---- /gachi ----
 
     @app_commands.command(
@@ -94,19 +166,8 @@ class Music(commands.Cog):
             return
 
         # Подключаемся к каналу автора
-        channel = interaction.user.voice.channel
-        vc = interaction.guild.voice_client
-        try:
-            if vc is None:
-                await channel.connect()
-            elif vc.channel != channel:
-                await interaction.followup.send(
-                    f"Я сейчас в другом канале ({vc.channel.mention}) — "
-                    "подойди туда или попроси /leave."
-                )
-                return
-        except discord.ClientException:
-            log.exception("Подключение к %s", channel)
+        if not await self._connect_to_author(interaction):
+            return
 
         for t in picked:
             recent.append(t.full_id)
