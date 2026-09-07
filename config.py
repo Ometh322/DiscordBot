@@ -18,6 +18,9 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 # Путь к FFmpeg; по умолчанию — из PATH (работает после перезапуска системы).
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg").strip()
 
+# Громкость приветствий (множитель): 4.0 = в 4 раза громче (~+12 дБ)
+WELCOME_VOLUME = max(0.1, float(os.getenv("WELCOME_VOLUME", "4.0")))
+
 
 SOUNDS_README = """\
 Звуки приветствия (data/sounds)

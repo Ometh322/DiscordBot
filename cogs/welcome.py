@@ -6,7 +6,8 @@
   затем трек возобновляется (тем же треком, очередь не двигается);
 - если бота не было в канале — он подключается следом и после уходит.
 
-Антиспам: один и тот же участник — не чаще раза в 30 секунд.
+Антиспам: вход в канал — не чаще раза в 30 секунд на участника,
+/hello — не чаще раза в 3 секунды.
 Форматы: mp3, ogg, wav, m4a, flac, opus.
 """
 
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 SOUND_EXTENSIONS = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus")
 JOIN_COOLDOWN_SECONDS = 30.0
+HELLO_COOLDOWN_SECONDS = 3.0
 
 
 def random_sound() -> Optional[Path]:
@@ -41,7 +43,8 @@ def random_sound() -> Optional[Path]:
 class Welcome(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._cooldowns = {}  # user_id -> monotonic время последнего звука
+        self._join_cd = {}   # user_id -> время последнего звука на вход
+        self._hello_cd = {}  # user_id -> время последнего /hello
 
     # ---- вспомогательное ----
 
@@ -49,11 +52,11 @@ class Welcome(commands.Cog):
         music = self.bot.get_cog("Music")
         return music.players.get(guild) if music else None
 
-    def _cooldown_ok(self, user_id: int) -> bool:
+    def _cooldown_ok(self, user_id: int, store: dict, seconds: float) -> bool:
         now = time.monotonic()
-        if now - self._cooldowns.get(user_id, 0.0) < JOIN_COOLDOWN_SECONDS:
+        if now - store.get(user_id, 0.0) < seconds:
             return False
-        self._cooldowns[user_id] = now
+        store[user_id] = now
         return True
 
     async def _play_greeting(
@@ -75,7 +78,8 @@ class Welcome(commands.Cog):
         try:
             # локальный файл: without_options — флаги -reconnect только для сетевых
             # стримов, на локальных файлах ffmpeg их отвергает
-            source = discord.FFmpegPCMAudio(str(path), executable=config.FFMPEG_PATH)
+            raw = discord.FFmpegPCMAudio(str(path), executable=config.FFMPEG_PATH)
+            source = discord.PCMVolumeTransformer(raw, volume=config.WELCOME_VOLUME)
             vc.play(source, after=_after)
         except Exception:
             log.exception("Приветствие %s не заиграло", path.name)
@@ -91,9 +95,10 @@ class Welcome(commands.Cog):
             log.exception("Автовыход после приветствия")
 
     async def _run_greeting(self, channel, user_id: int) -> Optional[Path]:
-        """Подключение + играем случайный файл. Возвращает сыгранный путь."""
+        """Подключение + играем случайный файл (кулдаун проверяет вызывающий).
+        Возвращает сыгранный путь."""
         sound = random_sound()
-        if sound is None or not self._cooldown_ok(user_id):
+        if sound is None:
             return None
 
         vc = channel.guild.voice_client
@@ -128,6 +133,8 @@ class Welcome(commands.Cog):
         if member.bot or before.channel is not None or after.channel is None:
             return  # боты, перемещения и выходы не приветствуем
 
+        if not self._cooldown_ok(member.id, self._join_cd, JOIN_COOLDOWN_SECONDS):
+            return
         await self._run_greeting(after.channel, member.id)
 
     # ---- /hello ----
@@ -149,12 +156,20 @@ class Welcome(commands.Cog):
             )
             return
 
+        if not self._cooldown_ok(
+            interaction.user.id, self._hello_cd, HELLO_COOLDOWN_SECONDS
+        ):
+            await interaction.response.send_message(
+                "Слишком часто — подожди пару секунд ⏳", ephemeral=True
+            )
+            return
         sound = await self._run_greeting(
             interaction.user.voice.channel, interaction.user.id
         )
         if sound is None:
             await interaction.response.send_message(
-                "Не сейчас (кулдаун или бот занят в другом канале).", ephemeral=True
+                "Не смог (в папке нет файлов или бот занят в другом канале).",
+                ephemeral=True,
             )
         else:
             await interaction.response.send_message(f"🔊 {sound.stem}")
