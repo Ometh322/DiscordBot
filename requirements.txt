@@ -1,0 +1,5 @@
+discord.py[voice]>=2.5,<2.6
+vk-api>=11.9
+vkaudiotoken>=0.5
+python-dotenv>=1.0
+pysocks>=1.7

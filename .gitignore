@@ -1,0 +1,9 @@
+venv/
+.env
+result.env
+vk_token_kit.zip
+__pycache__/
+*.pyc
+vk_config.v2.json
+data/
+logs/
