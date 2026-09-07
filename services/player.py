@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import time
 from collections import deque
 from typing import List, Optional
 
@@ -39,6 +40,11 @@ class GuildPlayer:
         self.text_channel: Optional[discord.abc.Messageable] = None
         self._idle_task: Optional[asyncio.Task] = None
         self._suppress_next = False  # приветствие останавливает трек без смены очереди
+        # учёт позиции текущего трека для возобновления после приветствия
+        self._track_started: Optional[float] = None  # monotonic
+        self._paused_total: float = 0.0
+        self._pause_started: Optional[float] = None
+        self._resume_offset: float = 0.0  # секунды для следующего запуска потока
 
     @property
     def voice(self) -> Optional[discord.VoiceClient]:
@@ -79,24 +85,47 @@ class GuildPlayer:
         return True
 
     def pause_for_greeting(self) -> bool:
-        """Останавливает текущий трек для приветствия, НЕ двигая очередь.
-        True — если музыка играла (после приветствия вызвать
-        resume_after_greeting)."""
+        """Останавливает текущий трек для приветствия, НЕ двигая очередь и
+        запоминая позицию. True — если музыка играла (после приветствия
+        вызвать resume_after_greeting)."""
         vc = self.voice
         if not (vc and (vc.is_playing() or vc.is_paused())):
             return False
+        now = time.monotonic()
+        if self._pause_started is not None:  # стоял на паузе кнопкой
+            self._paused_total += now - self._pause_started
+            self._pause_started = None
+        if self._track_started is not None:
+            self._resume_offset = max(
+                0.0, now - self._track_started - self._paused_total
+            )
         self._suppress_next = True
         vc.stop()
         return True
 
     async def resume_after_greeting(self) -> None:
-        """Возвращает трек, прерванный приветствием."""
+        """Возвращает трек, прерванный приветствием, — с прежней позиции."""
         if self.current is None:
             await self.play_next()  # прерывать было нечего — просто очередь
             return
         track, self.current = self.current, None
         self.queue.insert(0, track)
         await self.play_next(announce=False)
+
+    def pause_music(self) -> None:
+        """Пауза с учётом времени (для возобновления по позиции)."""
+        vc = self.voice
+        if vc and vc.is_playing() and self._pause_started is None:
+            vc.pause()
+            self._pause_started = time.monotonic()
+
+    def resume_music(self) -> None:
+        vc = self.voice
+        if vc and vc.is_paused():
+            vc.resume()
+            if self._pause_started is not None:
+                self._paused_total += time.monotonic() - self._pause_started
+                self._pause_started = None
 
     def stop(self) -> int:
         """Остановить воспроизведение и очистить очередь. Возвращает размер очереди."""
@@ -135,12 +164,16 @@ class GuildPlayer:
                 return
 
             track = self.queue.pop(0)
+            offset, self._resume_offset = self._resume_offset, 0.0
+            before = FFMPEG_BEFORE_OPTIONS
+            if offset > 0.5:  # возобновление после приветствия — с позиции
+                before = f"-ss {offset:.1f} " + FFMPEG_BEFORE_OPTIONS
             try:
                 url = await asyncio.to_thread(self.sc.fresh_url, track)
                 source = discord.FFmpegPCMAudio(
                     url,
                     executable=config.FFMPEG_PATH,
-                    before_options=FFMPEG_BEFORE_OPTIONS,
+                    before_options=before,
                 )
             except TrackUnavailable as e:
                 await self._notify(f"⚠️ Пропускаю: {e}")
@@ -171,6 +204,11 @@ class GuildPlayer:
                 log.exception("VoiceClient.play(%s)", track.full_id)
                 self.current = None
                 continue
+
+            # трек стартовал — начинаем учёт позиции
+            self._track_started = time.monotonic()
+            self._paused_total = 0.0
+            self._pause_started = None
 
             if announce:
                 await self._now_playing()
@@ -272,10 +310,10 @@ class PlayerControls(discord.ui.View):
             )
             return
         if vc.is_paused():
-            vc.resume()
+            self.player.resume_music()
             button.emoji = "⏸️"
         else:
-            vc.pause()
+            self.player.pause_music()
             button.emoji = "▶️"
         await interaction.response.edit_message(view=self)
 

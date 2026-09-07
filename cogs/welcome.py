@@ -76,12 +76,13 @@ class Welcome(commands.Cog):
 
         try:
             # Усиление фильтром FFmpeg + лимитер: громко, но без жёсткого
-            # клиппинга (локальным файлам -reconnect не нужен)
+            # клиппинга. ВАЖНО: options — только строкой (dict FFmpegPCMAudio
+            # молча игнорирует). Локальным файлам -reconnect не нужен.
             gain_db = 20 * math.log10(config.WELCOME_VOLUME)
             source = discord.FFmpegPCMAudio(
                 str(path),
                 executable=config.FFMPEG_PATH,
-                options={"-af": f"volume={gain_db:.1f}dB,alimiter=limit=0.95"},
+                options=f"-af volume={gain_db:.1f}dB,alimiter=limit=0.95",
             )
             vc.play(source, after=_after)
         except Exception:
