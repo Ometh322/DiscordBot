@@ -23,11 +23,10 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import requests
 
-from config import BASE_DIR
+# Зависимости только requests: скрипт можно запускать и вне проекта (на ВМ)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Официальный Android-клиент ВК (публичные константы, воспроизводят запросы
 # настоящего приложения — как в vkpymusic/VkMobileClient)
