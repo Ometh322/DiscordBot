@@ -22,7 +22,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from services.player import FFMPEG_BEFORE_OPTIONS, GuildPlayer
+from services.player import GuildPlayer
 
 log = logging.getLogger(__name__)
 
@@ -73,11 +73,9 @@ class Welcome(commands.Cog):
                 )
 
         try:
-            source = discord.FFmpegPCMAudio(
-                str(path),
-                executable=config.FFMPEG_PATH,
-                before_options=FFMPEG_BEFORE_OPTIONS,
-            )
+            # локальный файл: without_options — флаги -reconnect только для сетевых
+            # стримов, на локальных файлах ffmpeg их отвергает
+            source = discord.FFmpegPCMAudio(str(path), executable=config.FFMPEG_PATH)
             vc.play(source, after=_after)
         except Exception:
             log.exception("Приветствие %s не заиграло", path.name)
