@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from services.player import PlayerManager, fmt_duration
+from services.player import PlayerControls, PlayerManager, fmt_duration
 from services.soundcloud import SEARCH_QUERIES, SoundCloud, SoundCloudError
 
 log = logging.getLogger(__name__)
@@ -121,8 +121,11 @@ class Music(commands.Cog):
                   f"({'гачи' if language == 'ru' else 'gachi'})",
             description="\n".join(lines),
         )
-        await interaction.followup.send("▶ Первый уже играет" if len(picked) > 1
-                                       else "▶ Играю", embed=embed)
+        await interaction.followup.send(
+            "▶ Первый уже играет" if len(picked) > 1 else "▶ Играю",
+            embed=embed,
+            view=PlayerControls(player),
+        )
 
     # ---- /skip ----
 

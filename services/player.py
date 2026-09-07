@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+from collections import deque
 from typing import List, Optional
 
 import discord
@@ -34,6 +35,7 @@ class GuildPlayer:
         self.sc = sc
         self.queue: List[Track] = []
         self.current: Optional[Track] = None
+        self.played: deque = deque(maxlen=100)  # история для кнопки «назад»
         self.text_channel: Optional[discord.abc.Messageable] = None
         self._idle_task: Optional[asyncio.Task] = None
 
@@ -60,6 +62,21 @@ class GuildPlayer:
         await self.play_next()
         return False
 
+    async def prev(self) -> bool:
+        """Вернуть предыдущий трек (текущий встанет после него)."""
+        if not self.played:
+            return False
+        prev_track = self.played.pop()
+        if self.current is not None:
+            self.queue.insert(0, self.current)
+        self.queue.insert(0, prev_track)
+        vc = self.voice
+        if vc and (vc.is_playing() or vc.is_paused()):
+            vc.stop()  # after-callback сам запустит предыдущий трек
+        else:
+            await self.play_next(announce=True)
+        return True
+
     def stop(self) -> int:
         """Остановить воспроизведение и очистить очередь. Возвращает размер очереди."""
         cleared = len(self.queue)
@@ -85,6 +102,9 @@ class GuildPlayer:
         """Берёт следующий трек из очереди и запускает. announce=False — первый
         трек, запущенный командой, которая сама отвечает пользователю."""
         self._cancel_idle()
+
+        if self.current is not None:  # сыгравшее — в историю для «назад»
+            self.played.append(self.current)
 
         while self.queue:
             vc = self.voice
@@ -154,7 +174,7 @@ class GuildPlayer:
         embed.set_footer(text=f"Длительность: {fmt_duration(t.duration)}")
         embed.url = t.page_url
         try:
-            await self.text_channel.send(embed=embed)
+            await self.text_channel.send(embed=embed, view=PlayerControls(self))
         except (discord.HTTPException, AttributeError):
             log.exception("Не удалось отправить 'Сейчас играет'")
 
@@ -180,6 +200,75 @@ class GuildPlayer:
             await vc.disconnect(force=True)
             log.info("Автовыход из канала %s (гильдия %s): 5 минут простоя",
                      vc.channel, self.guild)
+
+
+class PlayerControls(discord.ui.View):
+    """Кнопки управления под сообщением «Сейчас играет»: ⏮ ⏸ ⏹ ⏭.
+
+    Доступны всем, кто находится в голосовом канале вместе с ботом."""
+
+    def __init__(self, player: GuildPlayer):
+        super().__init__(timeout=None)
+        self.player = player
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        user_v = interaction.user.voice
+        bot_v = self.player.voice
+        if not user_v or not user_v.channel:
+            await interaction.response.send_message(
+                "Зайди в голосовой канал, чтобы управлять плеером 🎧", ephemeral=True
+            )
+            return False
+        if bot_v and user_v.channel != bot_v.channel:
+            await interaction.response.send_message(
+                f"Ты в другом канале — плеер управляется из {bot_v.channel.mention}",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(emoji="⏮️", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction,
+                          button: discord.ui.Button):
+        if await self.player.prev():
+            await interaction.response.defer()
+        else:
+            await interaction.response.send_message(
+                "Предыдущего трека нет.", ephemeral=True
+            )
+
+    @discord.ui.button(emoji="⏸️", style=discord.ButtonStyle.primary)
+    async def pause_button(self, interaction: discord.Interaction,
+                           button: discord.ui.Button):
+        vc = self.player.voice
+        if not vc or not (vc.is_playing() or vc.is_paused()):
+            await interaction.response.send_message(
+                "Сейчас ничего не играет.", ephemeral=True
+            )
+            return
+        if vc.is_paused():
+            vc.resume()
+            button.emoji = "⏸️"
+        else:
+            vc.pause()
+            button.emoji = "▶️"
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
+    async def stop_button(self, interaction: discord.Interaction,
+                          button: discord.ui.Button):
+        self.player.stop()
+        await interaction.response.edit_message(view=None)
+
+    @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.secondary)
+    async def skip_button(self, interaction: discord.Interaction,
+                          button: discord.ui.Button):
+        if await self.player.skip():
+            await interaction.response.defer()
+        else:
+            await interaction.response.send_message(
+                "Нечего пропускать.", ephemeral=True
+            )
 
 
 class PlayerManager:
