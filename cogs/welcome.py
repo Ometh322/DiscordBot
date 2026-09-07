@@ -113,7 +113,7 @@ class Welcome(commands.Cog):
                 leave_after = True
             elif vc.channel == channel:
                 leave_after = False
-                music_interrupted = await player.pause_for_greeting()
+                music_interrupted = player.pause_for_greeting()  # sync: bool
             else:
                 return None  # бот занят в другом канале
         except (discord.ClientException, asyncio.TimeoutError):
