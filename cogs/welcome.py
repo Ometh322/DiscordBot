@@ -6,13 +6,14 @@
   затем трек возобновляется (тем же треком, очередь не двигается);
 - если бота не было в канале — он подключается следом и после уходит.
 
-Антиспам: вход в канал — не чаще раза в 30 секунд на участника,
-/hello — не чаще раза в 3 секунды.
+Антиспам: /hello — не чаще раза в 3 секунды; на вход в канал
+ограничений нет.
 Форматы: mp3, ogg, wav, m4a, flac, opus.
 """
 
 import asyncio
 import logging
+import math
 import random
 import time
 from pathlib import Path
@@ -28,7 +29,6 @@ from services.player import GuildPlayer
 log = logging.getLogger(__name__)
 
 SOUND_EXTENSIONS = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus")
-JOIN_COOLDOWN_SECONDS = 30.0
 HELLO_COOLDOWN_SECONDS = 3.0
 
 
@@ -43,7 +43,6 @@ def random_sound() -> Optional[Path]:
 class Welcome(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._join_cd = {}   # user_id -> время последнего звука на вход
         self._hello_cd = {}  # user_id -> время последнего /hello
 
     # ---- вспомогательное ----
@@ -76,10 +75,14 @@ class Welcome(commands.Cog):
                 )
 
         try:
-            # локальный файл: without_options — флаги -reconnect только для сетевых
-            # стримов, на локальных файлах ffmpeg их отвергает
-            raw = discord.FFmpegPCMAudio(str(path), executable=config.FFMPEG_PATH)
-            source = discord.PCMVolumeTransformer(raw, volume=config.WELCOME_VOLUME)
+            # Усиление фильтром FFmpeg + лимитер: громко, но без жёсткого
+            # клиппинга (локальным файлам -reconnect не нужен)
+            gain_db = 20 * math.log10(config.WELCOME_VOLUME)
+            source = discord.FFmpegPCMAudio(
+                str(path),
+                executable=config.FFMPEG_PATH,
+                options={"-af": f"volume={gain_db:.1f}dB,alimiter=limit=0.95"},
+            )
             vc.play(source, after=_after)
         except Exception:
             log.exception("Приветствие %s не заиграло", path.name)
@@ -117,6 +120,11 @@ class Welcome(commands.Cog):
             log.exception("Подключение для приветствия")
             return None
 
+        if music_interrupted:
+            # даём голосу освободиться после vc.stop(), иначе vc.play падает
+            # с «Already playing audio» и приветствие молча сгорает
+            await asyncio.sleep(0.35)
+
         log.info("Приветствие: %s", sound.name)
         await self._play_greeting(vc, sound, leave_after, player, music_interrupted)
         return sound
@@ -133,8 +141,6 @@ class Welcome(commands.Cog):
         if member.bot or before.channel is not None or after.channel is None:
             return  # боты, перемещения и выходы не приветствуем
 
-        if not self._cooldown_ok(member.id, self._join_cd, JOIN_COOLDOWN_SECONDS):
-            return
         await self._run_greeting(after.channel, member.id)
 
     # ---- /hello ----
