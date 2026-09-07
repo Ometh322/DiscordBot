@@ -38,6 +38,7 @@ class GuildPlayer:
         self.played: deque = deque(maxlen=100)  # история для кнопки «назад»
         self.text_channel: Optional[discord.abc.Messageable] = None
         self._idle_task: Optional[asyncio.Task] = None
+        self._suppress_next = False  # приветствие останавливает трек без смены очереди
 
     @property
     def voice(self) -> Optional[discord.VoiceClient]:
@@ -76,6 +77,26 @@ class GuildPlayer:
         else:
             await self.play_next(announce=True)
         return True
+
+    def pause_for_greeting(self) -> bool:
+        """Останавливает текущий трек для приветствия, НЕ двигая очередь.
+        True — если музыка играла (после приветствия вызвать
+        resume_after_greeting)."""
+        vc = self.voice
+        if not (vc and (vc.is_playing() or vc.is_paused())):
+            return False
+        self._suppress_next = True
+        vc.stop()
+        return True
+
+    async def resume_after_greeting(self) -> None:
+        """Возвращает трек, прерванный приветствием."""
+        if self.current is None:
+            await self.play_next()  # прерывать было нечего — просто очередь
+            return
+        track, self.current = self.current, None
+        self.queue.insert(0, track)
+        await self.play_next(announce=False)
 
     def stop(self) -> int:
         """Остановить воспроизведение и очистить очередь. Возвращает размер очереди."""
@@ -137,6 +158,10 @@ class GuildPlayer:
             def _after(error):
                 if error:
                     log.error("Ошибка воспроизведения: %s", error)
+                if self._suppress_next:
+                    # трек остановлен приветствием — очередь не двигаем
+                    self._suppress_next = False
+                    return
                 # after() вызывается из потока аудио — переносим в цикл бота
                 asyncio.run_coroutine_threadsafe(self.play_next(), self.bot.loop)
 
