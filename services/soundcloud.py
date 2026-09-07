@@ -15,7 +15,7 @@ import yt_dlp
 
 log = logging.getLogger(__name__)
 
-GACHI_RE = re.compile(r"gachi|гачи", re.IGNORECASE)
+GACHI_RE = re.compile(r"gachi|гачи|right version", re.IGNORECASE)
 
 # Вариации запросов для случайной выборки по языку
 SEARCH_QUERIES = {

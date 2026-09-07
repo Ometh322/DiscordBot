@@ -35,15 +35,15 @@ class Music(commands.Cog):
         description="Добавить случайные GACHI-треки в очередь",
     )
     @app_commands.describe(
-        language="Язык: ru — искать «гачи…», ang — искать «gachi…»",
         count="Сколько треков добавить (1–10)",
+        language="Язык: ru — искать «гачи…» (по умолчанию), ang — «gachi…»",
     )
     @app_commands.guild_only()
     async def gachi(
         self,
         interaction: discord.Interaction,
-        language: Literal["ru", "ang"],
-        count: app_commands.Range[int, 1, 10] = 3,
+        count: app_commands.Range[int, 1, 10],
+        language: Literal["ru", "ang"] = "ru",
     ):
         if not interaction.user.voice or not interaction.user.voice.channel:
             await interaction.response.send_message(
