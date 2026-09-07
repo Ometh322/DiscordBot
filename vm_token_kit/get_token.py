@@ -1,34 +1,33 @@
-"""Получение Kate-токена ВК (доступ к методам audio.*) — автономная версия для ВМ.
+"""Получение VK-токена с доступом к audio.* под ОФИЦИАЛЬНЫМ приложением ВК.
 
-Запускать с машины с «чистым» IP, если основной попал под Flood control:
+Автономная версия для запуска на машине с «чистым» IP (Ubuntu/Windows).
 
-    python3 get_token.py
+Контекст: в мае 2026 ВК закрыл аудио-методы для сторонних клиентов
+(Kate/Boom). Рабочий путь — прямая авторизация grant_type=password под
+официальным Android-клиентом ВК (app_id 2274003), как в vkpymusic.
 
-Спрашивает логин/пароль интерактивно (лучше выделенный аккаунт ВК),
-поддерживает 2FA. Результат печатается и сохраняется в result.env —
-это три строки (VK_TOKEN, VK_USER_AGENT, VK_API_VERSION) для .env
-основного проекта.
+Итог печатается и сохраняется в result.env — три строки (VK_TOKEN,
+VK_USER_AGENT, VK_API_VERSION) для .env основного проекта.
 
-Опционально: --proxy socks5://host:port или http://host:port
+Запуск:  python3 get_token.py
+Прокси:  python3 get_token.py --proxy socks5://host:port
 """
 
 import os
+import re
 import sys
 import time
 from getpass import getpass
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
-# Константы клиента Kate Mobile (публичные, из open-source vkaudiotoken)
-KATE_APP_ID = "2685278"
-KATE_SECRET = "lxhD8OD7dMsqtXIm5IUY"
-KATE_UA = (
-    "KateMobileAndroid/56 lite-460 "
-    "(Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
-)
+APP_ID = "2274003"
+CLIENT_SECRET = "hHbZxrka2uZ6jB1inYsH"
+USER_AGENT = "VKAndroidApp/4.13.1-1206 (Android 4.4.3; SDK 19; armeabi; ; ru)"
 
-API_VERSIONS_TO_TRY = ("5.220", "5.131", "5.95")
+API_VERSIONS_TO_TRY = ("5.131", "5.95", "5.220")
 
 
 def apply_proxy_from_args() -> None:
@@ -43,110 +42,98 @@ def apply_proxy_from_args() -> None:
         print(f"Иду через прокси: {proxy}")
 
 
-def direct_grant(login, password, code=None, captcha_sid=None, captcha_key=None):
+def direct_grant(login, password, code=None, success_token=None):
     params = {
         "grant_type": "password",
-        "client_id": KATE_APP_ID,
-        "client_secret": KATE_SECRET,
+        "client_id": APP_ID,
+        "client_secret": CLIENT_SECRET,
         "username": login,
         "password": password,
         "scope": "audio,offline",
-        "v": "5.131",
-        "lang": "ru",
         "2fa_supported": "1",
+        "force_sms": "1",
+        "v": "5.131",
     }
     if code:
-        if code.upper() == "GET_CODE":
-            params["force_sms"] = "1"
-        else:
-            params["code"] = code
-    if captcha_sid:
-        params["captcha_sid"] = captcha_sid
-        params["captcha_key"] = captcha_key
-    r = requests.get(
-        "https://oauth.vk.ru/token",
-        params=params,
-        headers={"User-Agent": KATE_UA},
+        params["code"] = code
+    if success_token:
+        params["success_token"] = success_token
+    r = requests.post(
+        "https://oauth.vk.com/token",
+        data=params,
+        headers={"User-Agent": USER_AGENT},
+        timeout=20,
+    )
+    return r.json()
+
+
+def request_sms(sid):
+    requests.post(
+        "https://api.vk.com/method/auth.validatePhone",
+        data={"sid": str(sid), "v": "5.131"},
+        headers={"User-Agent": USER_AGENT},
+        timeout=20,
+    )
+
+
+def extract_success_token(pasted: str) -> str:
+    pasted = pasted.strip()
+    if "success_token" in pasted:
+        qs = urlparse(pasted)
+        source = parse_qs(qs.fragment or qs.query)
+        if "success_token" in source:
+            return source["success_token"][0]
+    if re.fullmatch(r"[A-Za-z0-9_\-]{10,}", pasted):
+        return pasted
+    raise ValueError("Не нашёл success_token — вставь ссылку после решения капчи.")
+
+
+def api(method, token, version, **params):
+    data = {"access_token": token, "v": version, "https": "1", "lang": "ru"}
+    data.update(params)
+    r = requests.post(
+        f"https://api.vk.com/method/{method}",
+        data=data,
+        headers={"User-Agent": USER_AGENT},
         timeout=20,
     )
     return r.json()
 
 
 def validate(token):
-    """Проверяет audio.search по нескольким версиям API -> (ok, версия, кол-во)."""
     for v in API_VERSIONS_TO_TRY:
         time.sleep(1)
-        try:
-            r = requests.post(
-                "https://api.vk.ru/method/audio.search",
-                data={
-                    "access_token": token,
-                    "v": v,
-                    "q": "gachi",
-                    "count": 20,
-                    "sort": 0,
-                },
-                headers={"User-Agent": KATE_UA},
-                timeout=20,
-            )
-            body = r.json()
-        except requests.RequestException as e:
-            print(f"   v={v}: сеть — {e}")
-            continue
+        body = api("audio.search", token, v, q="gachi", count=20, sort=0)
         items = body.get("response", {}).get("items")
-        if items is not None:
-            with_url = sum(1 for t in items if t.get("url"))
-            print(f"   v={v}: OK, треков {len(items)}, с mp3-ссылкой {with_url}")
-            return True, v, len(items)
-        err = body.get("error", {})
-        print(f"   v={v}: [{err.get('error_code')}] {err.get('error_msg', '')[:60]}")
-    return False, None, 0
+        if items is None:
+            err = body.get("error", {})
+            print(f"   search v={v}: [{err.get('error_code')}] {err.get('error_msg', '')[:60]}")
+            continue
+        with_url = [t for t in items if t.get("url")]
+        print(f"   search v={v}: OK, треков {len(items)}, со ссылкой {len(with_url)}")
+        if not with_url:
+            continue
+        track_id = f"{with_url[0]['owner_id']}_{with_url[0]['id']}"
+        body2 = api("audio.getById", token, v, audios=track_id)
+        ok2 = bool(body2.get("response"))
+        print(f"   getById v={v}: {'OK' if ok2 else 'НЕ работает'}")
+        if ok2:
+            return True, v
+    return False, None
 
 
-def whoami(token: str) -> str:
+def whoami(token):
     try:
-        r = requests.post(
-            "https://api.vk.ru/method/users.get",
-            data={"access_token": token, "v": "5.131"},
-            headers={"User-Agent": KATE_UA},
-            timeout=15,
-        )
-        u = r.json().get("response", [{}])[0]
+        u = api("users.get", token, "5.131")["response"][0]
         return f"{u.get('first_name', '')} {u.get('last_name', '')} (id {u.get('id', '?')})"
     except Exception:
         return "?"
 
 
-def full_android_flow(login, password):
-    """Полный путь vkaudiotoken: GCM-чекин -> receipt -> auth.refreshToken."""
-    from vkaudiotoken import (
-        AndroidCheckin,
-        CommonParams,
-        SmallProtobufHelper,
-        TokenException,
-        TokenReceiver,
-    )
-
-    params = CommonParams()
-    pb = SmallProtobufHelper()
-    print("   Чекин у Google как Android-устройства…")
-    auth_data = AndroidCheckin(params, pb).do_checkin()
-
-    receiver = TokenReceiver(login, password, auth_data, params, None)
-    try:
-        return receiver.get_token()
-    except TokenException as e:
-        if "need_validation" not in str(getattr(e, "data", "")) and "validation" not in str(e).lower():
-            raise
-        code = input("   Код 2FA (GET_CODE — прислать SMS): ").strip()
-        receiver = TokenReceiver(login, password, auth_data, params, code)
-        return receiver.get_token()
-
-
-def save_result(token, version) -> Path:
+def save_result(token, version):
     path = Path(__file__).resolve().parent / "result.env"
     path.write_text(
-        f"VK_TOKEN={token}\nVK_USER_AGENT={KATE_UA}\nVK_API_VERSION={version}\n",
+        f"VK_TOKEN={token}\nVK_USER_AGENT={USER_AGENT}\nVK_API_VERSION={version}\n",
         encoding="utf-8",
     )
     return path
@@ -160,21 +147,33 @@ def main():
     except Exception:
         password = input("Пароль: ")
 
-    print("\nШаг 1: прямая авторизация…")
+    print("\nШаг 1: прямая авторизация под официальным приложением ВК…")
     data = direct_grant(login, password)
-    for _ in range(3):
+    for _ in range(5):
         err = data.get("error")
         if err == "need_validation":
             print("   Нужен код подтверждения (2FA/SMS).")
-            code = input("   Код (GET_CODE — прислать SMS): ").strip()
+            sid = data.get("validation_sid")
+            if sid:
+                print("   Запрашиваю SMS с кодом…")
+                request_sms(sid)
+            code = input("   Код из SMS/приложения: ").strip()
             data = direct_grant(login, password, code=code)
-        elif err == "captcha_error":
-            print("   Капча:", data.get("captcha_img", ""))
-            captcha_key = input("   Введи текст с картинки: ").strip()
-            data = direct_grant(
-                login, password,
-                captcha_sid=data.get("captcha_sid"), captcha_key=captcha_key,
-            )
+        elif err == "need_captcha":
+            url = data.get("redirect_uri", "")
+            print("   ВК требует капчу. Открой в браузере ссылку:")
+            print(f"   {url}")
+            print("   Реши капчу и вставь сюда итоговую ссылку (или success_token):")
+            pasted = input("   > ")
+            try:
+                success = extract_success_token(pasted)
+            except ValueError as e:
+                print("  ", e)
+                continue
+            data = direct_grant(login, password, success_token=success)
+        elif err == "invalid_request" and "code" in str(data.get("error_description", "")).lower():
+            code = input("   Неверный код, попробуй ещё: ").strip()
+            data = direct_grant(login, password, code=code)
         else:
             break
 
@@ -182,39 +181,28 @@ def main():
     if not token:
         err = str(data.get("error", ""))
         if "flood" in err.lower() or data.get("error_type") == "password_bruteforce_attempt":
-            print("   Flood control и на этом IP — ВМ уже отмечалась неудачными входами?")
-            print("   Подожди ~24 ч или используй другой IP (--proxy …).")
+            print("   Flood control и на этом IP — подожди ~24 ч или смени IP (--proxy).")
             sys.exit(1)
-        desc = data.get("error_description") or data.get("error") or data
+        desc = data.get("error_description") or err or data
         print(f"   Не получилось: {desc}")
-        if "validate" in str(desc).lower() or "security" in str(desc).lower():
-            print("   ВК требует подтвердить вход в браузере — пришли мне полный вывод.")
+        if err == "invalid_client":
+            print("   (неверный логин или пароль)")
         sys.exit(1)
     print("   Токен получен.")
 
-    print("\nШаг 2: проверка доступа к audio.search…")
-    ok, version, _ = validate(token)
-
+    print("\nШаг 2: проверка audio.search / audio.getById…")
+    ok, version = validate(token)
     if not ok:
-        print("\nШаг 3: простой токен не видит audio.* — полный Android-флоу…")
-        try:
-            token = full_android_flow(login, password)
-            print("   Токен обновлён.")
-            ok, version, _ = validate(token)
-        except Exception as e:
-            print(f"   Полный флоу не удался: {e!r}")
-
-    if not ok:
-        print("\n❌ Доступ к audio.* не получен — пришли полный вывод скрипта.")
+        print("\n❌ Токен не видит аудио-методы — пришли полный вывод скрипта.")
         sys.exit(1)
 
-    save_result(token, version)
+    path = save_result(token, version)
     print(f"\n✅ Готово! Аккаунт: {whoami(token)}")
-    print("\nСкопируй эти три строки в .env основной машины (замени соответствующие):\n")
+    print("\nСкопируй эти три строки в .env основной машины:\n")
     print(f"VK_TOKEN={token}")
-    print(f"VK_USER_AGENT={KATE_UA}")
+    print(f"VK_USER_AGENT={USER_AGENT}")
     print(f"VK_API_VERSION={version}")
-    print(f"\n(они же сохранены в файл {Path('result.env')})")
+    print(f"\n(они же сохранены в {path})")
 
 
 if __name__ == "__main__":
