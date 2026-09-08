@@ -1,0 +1,19 @@
+[Unit]
+Description=Gachi Discord Bot (SoundCloud)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# поменяй пользователя под свою ВМ
+User=ubuntu
+WorkingDirectory=/opt/discordbot
+ExecStart=/opt/discordbot/venv/bin/python -u bot.py
+Restart=on-failure
+RestartSec=10
+# ждём-перезапускаемся при пропадании сети
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Install]
+WantedBy=multi-user.target

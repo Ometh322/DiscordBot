@@ -1,0 +1,16 @@
+services:
+  bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: gachi-bot
+    restart: unless-stopped
+    # .env лежит в корне репозитория
+    env_file:
+      - ../.env
+    environment:
+      # внутри контейнера ffmpeg в PATH (перекрывает виндовый путь из .env)
+      FFMPEG_PATH: ffmpeg
+    volumes:
+      # звуки приветствий и SQLite-каталог живут на хосте
+      - ../data:/app/data

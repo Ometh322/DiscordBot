@@ -9,11 +9,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "discord-py[voice] (>=2.6,<3)",
-    "vk-api (>=11.9)",
     "yt-dlp (>=2025.10)",
-    "python-dotenv (>=1.0)",
-    "pysocks (>=1.7)",
-    "requests (>=2.28)"
+    "python-dotenv (>=1.0)"
 ]
 
 [tool.poetry]
