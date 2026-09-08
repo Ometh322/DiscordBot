@@ -1,15 +1,18 @@
-"""Звуковые приветствия: случайные аудиофайлы из data/sounds.
+"""Звуки приветствия и «бормотание» из data/sounds.
 
-Все файлы из папки — общий пул. Когда участник заходит в голосовой канал
-(или вызывает /hello), бот играет СЛУЧАЙНЫЙ файл из папки:
-- если играла музыка — она останавливается, приветствие проигрывается,
-  затем трек возобновляется (тем же треком, очередь не двигается);
-- если бота не было в канале — он подключается следом и после уходит.
+Два типа файлов по имени:
+  welcome_<ник|id>…  — личные приветствия: играют при входе участника
+                       в голосовой канал (если файлов несколько — случайный);
+                       ник/id — логин, отображаемое имя или ID пользователя
+                       в нижнем регистре, без пробелов;
+  random…            — «бормотание»: раз в минуту с вероятностью 20% бот
+                       выдаёт случайный из них в канале, где находится.
 
-Антиспам: /hello — не чаще раза в 3 секунды; на вход в канал
-ограничений нет.
-Форматы: mp3, ogg, wav, m4a, flac, opus. Загружать можно командой
-/sound (вложением) или просто копируя файлы в папку.
+Общее: если играла музыка — она приостанавливается и после звука
+возобновляется с прежней позиции; /hello — своё приветствие, при
+отсутствии случайное бормотание (кулдаун 3 с).
+Форматы: mp3, ogg, wav, m4a, flac, opus. Загрузка: /sound (вложением)
+или копированием в папку. Список: /sounds.
 """
 
 import asyncio
@@ -22,7 +25,7 @@ from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 from services.player import GuildPlayer
@@ -30,9 +33,18 @@ from services.player import GuildPlayer
 log = logging.getLogger(__name__)
 
 SOUND_EXTENSIONS = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus")
+WELCOME_PREFIX = "welcome"
+MUMBLE_PREFIX = "random"
 HELLO_COOLDOWN_SECONDS = 3.0
+MUMBLE_INTERVAL_MINUTES = 1
+MUMBLE_CHANCE = 0.20
 MAX_SOUND_BYTES = 10 * 1024 * 1024   # 10 МБ на файл
 MAX_SOUND_FILES = 100                # предохранитель от замусоривания
+
+
+def _sanitize_name(name: str) -> str:
+    """Нижний регистр, только буквы/цифры/дефис/подчёркивание (пробелы вон)."""
+    return "".join(c if c.isalnum() or c in "-_" else "" for c in name.lower())
 
 
 def _safe_stem(stem: str) -> str:
@@ -48,7 +60,38 @@ def _sound_files() -> list:
     )
 
 
-def random_sound() -> Optional[Path]:
+def find_welcome_sound(member: discord.Member) -> Optional[Path]:
+    """Случайный из личных приветствий участника (по id/логину/имени)."""
+    candidates = {
+        str(member.id),
+        _sanitize_name(member.name),
+        _sanitize_name(member.display_name),
+    } - {""}
+    matches = []
+    for p in _sound_files():
+        stem = p.stem.lower()
+        if not stem.startswith(WELCOME_PREFIX):
+            continue
+        rest = stem[len(WELCOME_PREFIX):]
+        if not rest.startswith("_"):
+            continue
+        rest = rest[1:]
+        for cand in candidates:
+            if rest == cand or rest.startswith(cand + "_"):
+                matches.append(p)
+                break
+    return random.choice(matches) if matches else None
+
+
+def random_mumble_sound() -> Optional[Path]:
+    files = [
+        p for p in _sound_files()
+        if p.stem.lower().startswith(MUMBLE_PREFIX)
+    ]
+    return random.choice(files) if files else None
+
+
+def random_any_sound() -> Optional[Path]:
     files = _sound_files()
     return random.choice(files) if files else None
 
@@ -56,7 +99,14 @@ def random_sound() -> Optional[Path]:
 class Welcome(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._hello_cd = {}  # user_id -> время последнего /hello
+        self._hello_cd = {}      # user_id -> время последнего /hello
+        self._greeting_active = False  # сейчас играет приветствие/бормотание
+
+    async def cog_load(self):
+        self.mumble_loop.start()
+
+    def cog_unload(self):
+        self.mumble_loop.cancel()
 
     # ---- вспомогательное ----
 
@@ -76,6 +126,7 @@ class Welcome(commands.Cog):
         player: Optional[GuildPlayer], music_interrupted: bool,
     ) -> None:
         def _after(error):
+            self._greeting_active = False
             if error:
                 log.error("Ошибка воспроизведения %s: %s", path.name, error)
             if leave_after:
@@ -97,9 +148,11 @@ class Welcome(commands.Cog):
                 executable=config.FFMPEG_PATH,
                 options=f"-af volume={gain_db:.1f}dB,alimiter=limit=0.95",
             )
+            self._greeting_active = True
             vc.play(source, after=_after)
         except Exception:
-            log.exception("Приветствие %s не заиграло", path.name)
+            self._greeting_active = False
+            log.exception("Звук %s не заиграл", path.name)
             if music_interrupted and player is not None:
                 await player.resume_after_greeting()  # не бросаем музыку молчащей
 
@@ -109,12 +162,10 @@ class Welcome(commands.Cog):
             if vc.is_connected() and not vc.is_playing() and not vc.is_paused():
                 await vc.disconnect(force=True)
         except Exception:
-            log.exception("Автовыход после приветствия")
+            log.exception("Автовыход после звука")
 
-    async def _run_greeting(self, channel, user_id: int) -> Optional[Path]:
-        """Подключение + играем случайный файл (кулдаун проверяет вызывающий).
-        Возвращает сыгранный путь."""
-        sound = random_sound()
+    async def _run_greeting(self, channel, sound: Path) -> Optional[Path]:
+        """Подключение (если нужно) + играем указанный звук."""
         if sound is None:
             return None
 
@@ -131,15 +182,15 @@ class Welcome(commands.Cog):
             else:
                 return None  # бот занят в другом канале
         except (discord.ClientException, asyncio.TimeoutError):
-            log.exception("Подключение для приветствия")
+            log.exception("Подключение для звука")
             return None
 
         if music_interrupted:
             # даём голосу освободиться после vc.stop(), иначе vc.play падает
-            # с «Already playing audio» и приветствие молча сгорает
+            # с «Already playing audio» и звук молча сгорает
             await asyncio.sleep(0.35)
 
-        log.info("Приветствие: %s", sound.name)
+        log.info("Звук: %s", sound.name)
         await self._play_greeting(vc, sound, leave_after, player, music_interrupted)
         return sound
 
@@ -155,13 +206,35 @@ class Welcome(commands.Cog):
         if member.bot or before.channel is not None or after.channel is None:
             return  # боты, перемещения и выходы не приветствуем
 
-        await self._run_greeting(after.channel, member.id)
+        sound = find_welcome_sound(member)
+        if sound is None:
+            return  # у участника нет своих welcome-файлов — тишина
+        await self._run_greeting(after.channel, sound)
+
+    # ---- бормотание ----
+
+    @tasks.loop(minutes=MUMBLE_INTERVAL_MINUTES)
+    async def mumble_loop(self):
+        if random.random() >= MUMBLE_CHANCE:
+            return
+        if not self.bot.is_ready() or self._greeting_active:
+            return
+        for guild in self.bot.guilds:
+            vc = guild.voice_client
+            if not vc or not vc.is_connected() or vc.channel is None:
+                continue
+            if not any(not m.bot for m in vc.channel.members):
+                continue  # в канале одни боты — бормотать некому
+            sound = random_mumble_sound()
+            if sound is not None:
+                await self._run_greeting(vc.channel, sound)
+                break  # один звук за тик на все сервера
 
     # ---- /hello ----
 
     @app_commands.command(
         name="hello",
-        description="Сыграть случайный звук приветствия",
+        description="Сыграть своё приветствие (или случайное бормотание)",
     )
     @app_commands.guild_only()
     async def hello(self, interaction: discord.Interaction):
@@ -170,12 +243,17 @@ class Welcome(commands.Cog):
                 "Зайди в голосовой канал 🎧", ephemeral=True
             )
             return
-        if random_sound() is None:
+
+        sound = (
+            find_welcome_sound(interaction.user)
+            or random_mumble_sound()
+            or random_any_sound()
+        )
+        if sound is None:
             await interaction.response.send_message(
                 "В папке data/sounds ещё нет аудиофайлов.", ephemeral=True
             )
             return
-
         if not self._cooldown_ok(
             interaction.user.id, self._hello_cd, HELLO_COOLDOWN_SECONDS
         ):
@@ -183,17 +261,16 @@ class Welcome(commands.Cog):
                 "Слишком часто — подожди пару секунд ⏳", ephemeral=True
             )
             return
-        sound = await self._run_greeting(
-            interaction.user.voice.channel, interaction.user.id
+
+        played = await self._run_greeting(
+            interaction.user.voice.channel, sound
         )
-        if sound is None:
+        if played is None:
             await interaction.response.send_message(
-                "Не смог (в папке нет файлов или бот занят в другом канале).",
-                ephemeral=True,
+                "Не смог (бот занят в другом канале).", ephemeral=True
             )
         else:
-            await interaction.response.send_message(f"🔊 {sound.stem}")
-
+            await interaction.response.send_message(f"🔊 {played.stem}")
 
     # ---- /sound: загрузка ----
 
@@ -234,24 +311,30 @@ class Welcome(commands.Cog):
             await interaction.followup.send(f"❌ Не удалось сохранить: {e}")
             return
 
+        stem = Path(name).stem.lower()
+        if stem.startswith(WELCOME_PREFIX):
+            kind = "личное приветствие (welcome_…)"
+        elif stem.startswith(MUMBLE_PREFIX):
+            kind = "случайное бормотание (random…)"
+        else:
+            kind = "без префикса — сыграет только через /hello"
         action = "обновлён" if exists else "сохранён"
         await interaction.followup.send(
-            f"✅ Звук **{name}** {action} — он в случайной ротации приветствий "
-            f"(всего в папке: {len(_sound_files())})."
+            f"✅ **{name}** {action} — {kind}. Всего в папке: {len(_sound_files())}."
         )
 
     # ---- /sounds: список ----
 
     @app_commands.command(
         name="sounds",
-        description="Какие звуки приветствий есть в ротации",
+        description="Какие звуки есть в ротации",
     )
     @app_commands.guild_only()
     async def sounds(self, interaction: discord.Interaction):
         files = _sound_files()
         if not files:
             await interaction.response.send_message(
-                "Папка приветствий пуста — загрузи первый через /sound."
+                "Папка звуков пуста — загрузи первый через /sound."
             )
             return
         total_mb = sum(p.stat().st_size for p in files) / 1024 / 1024
@@ -260,8 +343,11 @@ class Welcome(commands.Cog):
         if len(files) > 20:
             lines.append(f"…и ещё {len(files) - 20}")
         embed = discord.Embed(
-            title=f"🔊 Звуки приветствий: {len(files)} ({total_mb:.1f} МБ)",
+            title=f"🔊 Звуки: {len(files)} ({total_mb:.1f} МБ)",
             description="\n".join(lines),
+        )
+        embed.set_footer(
+            text="welcome_<ник|id>… — личные приветствия; random… — бормотание"
         )
         await interaction.response.send_message(embed=embed)
 
