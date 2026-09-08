@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import random
 import time
 from collections import deque
 from typing import List, Optional
@@ -13,6 +14,7 @@ from typing import List, Optional
 import discord
 
 import config
+from services.catalog import Catalog
 from services.gifs import attach_random_gif
 from services.soundcloud import SoundCloud, SoundCloudError, Track
 
@@ -21,6 +23,16 @@ log = logging.getLogger(__name__)
 # Переподключение к CDN при обрыве стрима (флаги идут до -i)
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 IDLE_DISCONNECT_SECONDS = 5 * 60
+
+# Случайный заголовок у «Сейчас играет»
+NOW_PLAYING_TITLES = (
+    "▶ Сейчас играет",
+    "♂ Dungeon Disco ♂",
+    "Славянский Зал Славы",
+    "Сейчас играет (Right Version)",
+    "Гачимучи Чарт ♂",
+    "🎵 Зал гачи-славы 🎵",
+)
 
 
 def fmt_duration(seconds: int) -> str:
@@ -31,10 +43,12 @@ def fmt_duration(seconds: int) -> str:
 class GuildPlayer:
     """Состояние плеера одной гильдии: очередь, текущий трек, автовыход."""
 
-    def __init__(self, bot: discord.Client, guild: discord.Guild, sc: SoundCloud):
+    def __init__(self, bot: discord.Client, guild: discord.Guild, sc: SoundCloud,
+                 catalog: Optional[Catalog] = None):
         self.bot = bot
         self.guild = guild
         self.sc = sc
+        self.catalog = catalog  # для ♂-одобрений
         self.queue: List[Track] = []
         self.current: Optional[Track] = None
         self.played: deque = deque(maxlen=100)  # история для кнопки «назад»
@@ -233,7 +247,10 @@ class GuildPlayer:
         t = self.current
         if not t:
             return
-        embed = discord.Embed(title="▶ Сейчас играет", description=f"**{t.title}**")
+        embed = discord.Embed(
+            title=random.choice(NOW_PLAYING_TITLES),
+            description=f"**{t.title}**",
+        )
         embed.add_field(name="Исполнитель", value=t.artist or "—")
         embed.set_footer(text=f"Длительность: {fmt_duration(t.duration)}")
         embed.url = t.page_url
@@ -331,6 +348,33 @@ class PlayerControls(discord.ui.View):
                 "Нечего пропускать.", ephemeral=True
             )
 
+    @discord.ui.button(emoji="♂", style=discord.ButtonStyle.success)
+    async def approve_button(self, interaction: discord.Interaction,
+                             button: discord.ui.Button):
+        track = self.player.current
+        if not track:
+            await interaction.response.send_message(
+                "Сейчас ничего не играет.", ephemeral=True
+            )
+            return
+        if not self.player.catalog:
+            await interaction.response.send_message(
+                "Одобрения недоступны.", ephemeral=True
+            )
+            return
+        ok = await asyncio.to_thread(
+            self.player.catalog.approvals_add,
+            interaction.guild_id, track.full_id, interaction.user.id,
+        )
+        if ok:
+            await interaction.response.send_message(
+                "♂ Одобрено! Трек пошёл в чарт.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "Ты уже одобрял этот трек ♂", ephemeral=True
+            )
+
     @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
     async def stop_button(self, interaction: discord.Interaction,
                           button: discord.ui.Button):
@@ -339,14 +383,16 @@ class PlayerControls(discord.ui.View):
 
 
 class PlayerManager:
-    def __init__(self, bot: discord.Client, sc: SoundCloud):
+    def __init__(self, bot: discord.Client, sc: SoundCloud,
+                 catalog: Optional[Catalog] = None):
         self.bot = bot
         self.sc = sc
+        self.catalog = catalog
         self._players = {}
 
     def get(self, guild: discord.Guild) -> GuildPlayer:
         player = self._players.get(guild.id)
         if player is None:
-            player = GuildPlayer(self.bot, guild, self.sc)
+            player = GuildPlayer(self.bot, guild, self.sc, self.catalog)
             self._players[guild.id] = player
         return player

@@ -36,6 +36,7 @@ class GachiBot(commands.Bot):
         await self.load_extension("cogs.music")
         await self.load_extension("cogs.welcome")
         await self.load_extension("cogs.gifs")
+        await self.load_extension("cogs.fun")
         await self.tree.sync()
         log.info("Слэш-команды синхронизированы")
 

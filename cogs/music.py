@@ -32,7 +32,7 @@ class Music(commands.Cog):
         self.bot = bot
         self.sc = SoundCloud()
         self.catalog = Catalog()
-        self.players = PlayerManager(bot, self.sc)
+        self.players = PlayerManager(bot, self.sc, self.catalog)
 
     async def cog_load(self):
         asyncio.get_running_loop().create_task(self._warmup_catalog())
@@ -119,6 +119,10 @@ class Music(commands.Cog):
             for l, group in by_lang.items():
                 if group:
                     await asyncio.to_thread(self.catalog.upsert, group, l)
+        await asyncio.to_thread(
+            self.catalog.add_request, interaction.guild_id,
+            interaction.user.id, [track],
+        )
 
         if not await self._connect_to_author(interaction):
             return
@@ -222,6 +226,9 @@ class Music(commands.Cog):
             return
 
         await asyncio.to_thread(self.catalog.mark_played, interaction.guild_id, picked)
+        await asyncio.to_thread(
+            self.catalog.add_request, interaction.guild_id, interaction.user.id, picked
+        )
         for t in picked:
             await player.enqueue(t)
 
@@ -292,6 +299,47 @@ class Music(commands.Cog):
             lines.append(f"…и ещё {len(player.queue) - 10}")
 
         embed = discord.Embed(title="🎼 Очередь", description="\n".join(lines))
+        await interaction.response.send_message(embed=embed)
+
+    # ---- /top ----
+
+    @app_commands.command(
+        name="top",
+        description="Топ гачирусов сервера и чарт треков по ♂-одобрениям",
+    )
+    @app_commands.guild_only()
+    async def top(self, interaction: discord.Interaction):
+        gid = interaction.guild_id
+        week = await asyncio.to_thread(self.catalog.top_requesters, gid, 7, 10)
+        total = await asyncio.to_thread(self.catalog.top_requesters, gid, None, 10)
+        chart = await asyncio.to_thread(self.catalog.top_tracks, gid, 10)
+
+        def user_name(uid: int) -> str:
+            member = interaction.guild.get_member(uid)
+            return member.display_name if member else f"<@{uid}>"
+
+        def fmt(rows, mapper):
+            return "\n".join(
+                f"{i}. {mapper(row)}" for i, row in enumerate(rows, start=1)
+            ) or "—"
+
+        embed = discord.Embed(title="🏆 Гачирусы сервера")
+        embed.add_field(
+            name="Неделя (кто заказывал)",
+            value=fmt(week, lambda r: f"{user_name(r[0])} — {r[1]}"),
+            inline=False,
+        )
+        embed.add_field(
+            name="За всё время",
+            value=fmt(total, lambda r: f"{user_name(r[0])} — {r[1]}"),
+            inline=False,
+        )
+        embed.add_field(
+            name="♂ Чарт треков (одобрения)",
+            value=fmt(chart, lambda r: f"**{r[0]}** — {r[1]} ♂×{r[2]}"),
+            inline=False,
+        )
+        embed.set_footer(text="♂ — кнопка одобрения под «Сейчас играет»")
         await interaction.response.send_message(embed=embed)
 
     # ---- /leave ----

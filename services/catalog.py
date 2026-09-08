@@ -57,6 +57,21 @@ class Catalog:
                 played_at REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (guild_id, track_id)
             );
+            CREATE TABLE IF NOT EXISTS approvals (
+                guild_id  INTEGER NOT NULL,
+                track_id  TEXT NOT NULL,
+                user_id   INTEGER NOT NULL,
+                created_at REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, track_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS requests (
+                guild_id     INTEGER NOT NULL,
+                user_id      INTEGER NOT NULL,
+                track_id     TEXT NOT NULL,
+                requested_at REAL NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_requests_guild
+                ON requests (guild_id, requested_at);
             """
         ))
 
@@ -126,3 +141,45 @@ class Catalog:
             "VALUES (?,?,?)",
             [(guild_id, t.track_id, now) for t in tracks if t.track_id],
         ))
+
+    # ---- гачирусы и одобрения ----
+
+    def add_request(self, guild_id: int, user_id: int, tracks: List[Track]) -> None:
+        """Кто заказал треки (для топа гачирусов)."""
+        now = time.time()
+        self._run(lambda con: con.executemany(
+            "INSERT INTO requests (guild_id, user_id, track_id, requested_at) "
+            "VALUES (?,?,?,?)",
+            [(guild_id, user_id, t.track_id, now) for t in tracks if t.track_id],
+        ))
+
+    def approvals_add(self, guild_id: int, track_id: str, user_id: int) -> bool:
+        """Одобрение ♂ (один раз на трек от пользователя). False — уже было."""
+        cur = self._run(lambda con: con.execute(
+            "INSERT OR IGNORE INTO approvals "
+            "(guild_id, track_id, user_id, created_at) VALUES (?,?,?,?)",
+            (guild_id, track_id, user_id, time.time()),
+        ))
+        return cur.rowcount > 0
+
+    def top_requesters(self, guild_id: int, days: Optional[int] = None,
+                       limit: int = 10) -> list:
+        """[(user_id, count)] — кто заказал больше всех (days=None — за всё время)."""
+        q = "SELECT user_id, COUNT(*) c FROM requests WHERE guild_id=?"
+        args: list = [guild_id]
+        if days:
+            q += " AND requested_at > ?"
+            args.append(time.time() - days * 86400)
+        q += " GROUP BY user_id ORDER BY c DESC LIMIT ?"
+        args.append(limit)
+        return self._run(lambda con: con.execute(q, args).fetchall())
+
+    def top_tracks(self, guild_id: int, limit: int = 10) -> list:
+        """[(title, artist, count)] — топ треков по одобрениям ♂."""
+        q = (
+            "SELECT t.title, t.artist, COUNT(*) c FROM approvals a "
+            "JOIN tracks t ON t.track_id = a.track_id "
+            "WHERE a.guild_id=? GROUP BY a.track_id "
+            "ORDER BY c DESC, t.title LIMIT ?"
+        )
+        return self._run(lambda con: con.execute(q, (guild_id, limit)).fetchall())
