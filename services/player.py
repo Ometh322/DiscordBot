@@ -317,12 +317,6 @@ class PlayerControls(discord.ui.View):
             button.emoji = "▶️"
         await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
-    async def stop_button(self, interaction: discord.Interaction,
-                          button: discord.ui.Button):
-        self.player.stop()
-        await interaction.response.edit_message(view=None)
-
     @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.secondary)
     async def skip_button(self, interaction: discord.Interaction,
                           button: discord.ui.Button):
@@ -332,6 +326,12 @@ class PlayerControls(discord.ui.View):
             await interaction.response.send_message(
                 "Нечего пропускать.", ephemeral=True
             )
+
+    @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
+    async def stop_button(self, interaction: discord.Interaction,
+                          button: discord.ui.Button):
+        self.player.stop()
+        await interaction.response.edit_message(view=None)
 
 
 class PlayerManager:
