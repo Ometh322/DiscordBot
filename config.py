@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 SOUNDS_DIR = DATA_DIR / "sounds"
+GIFS_DIR = DATA_DIR / "gifs"
 DB_PATH = DATA_DIR / "db.sqlite"
 BINDINGS_PATH = DATA_DIR / "bindings.json"
 
@@ -44,10 +45,25 @@ SOUNDS_README = """\
 Форматы: mp3, ogg, wav, m4a, flac, opus.
 """
 
+GIFS_README = """\
+Гифки (data/gifs)
+
+Случайная картинка отсюда прикрепляется к каждому сообщению
+«Сейчас играет» (и ответам /gachi, /play) и проигрывается
+анимацией прямо в Discord.
+
+Форматы: gif, apng, png, jpg, webp (до 8 МБ).
+Загрузка: /gif вложением или просто копированием сюда.
+"""
+
 
 def ensure_dirs() -> None:
-    """Создаёт служебные каталоги (data/, data/sounds/) и инструкцию."""
+    """Создаёт служебные каталоги (data/, data/sounds/, data/gifs/) и инструкции."""
     SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
     readme = SOUNDS_DIR / "README.txt"
     if not readme.is_file():
         readme.write_text(SOUNDS_README, encoding="utf-8")
+    GIFS_DIR.mkdir(parents=True, exist_ok=True)
+    greadme = GIFS_DIR / "README.txt"
+    if not greadme.is_file():
+        greadme.write_text(GIFS_README, encoding="utf-8")

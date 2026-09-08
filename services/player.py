@@ -13,6 +13,7 @@ from typing import List, Optional
 import discord
 
 import config
+from services.gifs import attach_random_gif
 from services.soundcloud import SoundCloud, SoundCloudError, Track
 
 log = logging.getLogger(__name__)
@@ -236,8 +237,11 @@ class GuildPlayer:
         embed.add_field(name="Исполнитель", value=t.artist or "—")
         embed.set_footer(text=f"Длительность: {fmt_duration(t.duration)}")
         embed.url = t.page_url
+        gif = attach_random_gif(embed)
         try:
-            await self.text_channel.send(embed=embed, view=PlayerControls(self))
+            await self.text_channel.send(
+                embed=embed, file=gif, view=PlayerControls(self)
+            )
         except (discord.HTTPException, AttributeError):
             log.exception("Не удалось отправить 'Сейчас играет'")
 

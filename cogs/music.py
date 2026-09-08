@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.catalog import Catalog
+from services.gifs import attach_random_gif
 from services.player import PlayerControls, PlayerManager, fmt_duration
 from services.soundcloud import (
     SEARCH_QUERIES,
@@ -131,10 +132,12 @@ class Music(commands.Cog):
             name="Длительность", value=fmt_duration(track.duration), inline=True
         )
         embed.url = track.page_url
+        gif = attach_random_gif(embed)
         await interaction.followup.send(
             "▶ Играю" if position == 1 else f"➕ В очереди (позиция {position})",
             embed=embed,
             view=PlayerControls(player),
+            file=gif,
         )
 
     # ---- /gachi ----
@@ -231,10 +234,12 @@ class Music(commands.Cog):
                   f"({'гачи' if language == 'ru' else 'gachi'})",
             description="\n".join(lines),
         )
+        gif = attach_random_gif(embed)
         await interaction.followup.send(
             "▶ Первый уже играет" if len(picked) > 1 else "▶ Играю",
             embed=embed,
             view=PlayerControls(player),
+            file=gif,
         )
 
     # ---- /skip ----
