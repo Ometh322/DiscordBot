@@ -8,7 +8,8 @@
 
 Антиспам: /hello — не чаще раза в 3 секунды; на вход в канал
 ограничений нет.
-Форматы: mp3, ogg, wav, m4a, flac, opus.
+Форматы: mp3, ogg, wav, m4a, flac, opus. Загружать можно командой
+/sound (вложением) или просто копируя файлы в папку.
 """
 
 import asyncio
@@ -30,13 +31,25 @@ log = logging.getLogger(__name__)
 
 SOUND_EXTENSIONS = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus")
 HELLO_COOLDOWN_SECONDS = 3.0
+MAX_SOUND_BYTES = 10 * 1024 * 1024   # 10 МБ на файл
+MAX_SOUND_FILES = 100                # предохранитель от замусоривания
+
+
+def _safe_stem(stem: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)[:50] or "sound"
+
+
+def _sound_files() -> list:
+    folder = config.SOUNDS_DIR
+    if not folder.is_dir():
+        return []
+    return sorted(
+        p for p in folder.iterdir() if p.suffix.lower() in SOUND_EXTENSIONS
+    )
 
 
 def random_sound() -> Optional[Path]:
-    folder = config.SOUNDS_DIR
-    if not folder.is_dir():
-        return None
-    files = [p for p in folder.iterdir() if p.suffix.lower() in SOUND_EXTENSIONS]
+    files = _sound_files()
     return random.choice(files) if files else None
 
 
@@ -180,6 +193,77 @@ class Welcome(commands.Cog):
             )
         else:
             await interaction.response.send_message(f"🔊 {sound.stem}")
+
+
+    # ---- /sound: загрузка ----
+
+    @app_commands.command(
+        name="sound",
+        description="Загрузить звук приветствия (вложением)",
+    )
+    @app_commands.describe(file="Аудиофайл: mp3, ogg, wav, m4a, flac, opus (до 10 МБ)")
+    @app_commands.guild_only()
+    async def sound(self, interaction: discord.Interaction, file: discord.Attachment):
+        ext = Path(file.filename).suffix.lower()
+        if ext not in SOUND_EXTENSIONS:
+            await interaction.response.send_message(
+                "Поддерживаю только: " + ", ".join(SOUND_EXTENSIONS), ephemeral=True
+            )
+            return
+        if file.size > MAX_SOUND_BYTES:
+            await interaction.response.send_message(
+                "Файл больше 10 МБ — обрежь или сожми его.", ephemeral=True
+            )
+            return
+
+        config.ensure_dirs()
+        files = _sound_files()
+        name = _safe_stem(Path(file.filename).stem) + ext
+        exists = (config.SOUNDS_DIR / name).is_file()
+        if not exists and len(files) >= MAX_SOUND_FILES:
+            await interaction.response.send_message(
+                f"В папке уже {len(files)} звуков — почисть лишние.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            await file.save(config.SOUNDS_DIR / name)
+        except (discord.HTTPException, OSError) as e:
+            log.exception("Сохранение звука %s", name)
+            await interaction.followup.send(f"❌ Не удалось сохранить: {e}")
+            return
+
+        action = "обновлён" if exists else "сохранён"
+        await interaction.followup.send(
+            f"✅ Звук **{name}** {action} — он в случайной ротации приветствий "
+            f"(всего в папке: {len(_sound_files())})."
+        )
+
+    # ---- /sounds: список ----
+
+    @app_commands.command(
+        name="sounds",
+        description="Какие звуки приветствий есть в ротации",
+    )
+    @app_commands.guild_only()
+    async def sounds(self, interaction: discord.Interaction):
+        files = _sound_files()
+        if not files:
+            await interaction.response.send_message(
+                "Папка приветствий пуста — загрузи первый через /sound."
+            )
+            return
+        total_mb = sum(p.stat().st_size for p in files) / 1024 / 1024
+        lines = [f"{i}. {p.name} ({p.stat().st_size / 1024:.0f} КБ)"
+                 for i, p in enumerate(files[:20], start=1)]
+        if len(files) > 20:
+            lines.append(f"…и ещё {len(files) - 20}")
+        embed = discord.Embed(
+            title=f"🔊 Звуки приветствий: {len(files)} ({total_mb:.1f} МБ)",
+            description="\n".join(lines),
+        )
+        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):
