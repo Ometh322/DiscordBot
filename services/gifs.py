@@ -17,8 +17,11 @@ import config
 log = logging.getLogger(__name__)
 
 GIF_EXTENSIONS = (".gif", ".apng", ".png", ".jpg", ".jpeg", ".webp")
-MAX_GIF_BYTES = 8 * 1024 * 1024   # 8 МБ на файл
-MAX_GIF_FILES = 50                # предохранитель
+MAX_GIF_BYTES = 32 * 1024 * 1024        # принимаем от пользователей
+# Discord не даст боту переотправить вложение больше ~25 МБ — такие гифки
+# в ротацию для сообщений не берём (иначе «Сейчас играет» вообще не уйдёт)
+MAX_RESEND_BYTES = 24 * 1024 * 1024
+MAX_GIF_FILES = 50                      # предохранитель
 
 
 def gif_files() -> list:
@@ -31,8 +34,12 @@ def gif_files() -> list:
 
 
 def random_gif() -> Optional[Path]:
-    files = gif_files()
-    return random.choice(files) if files else None
+    """Случайная гифка, которую бот сможет прикрепить к сообщению."""
+    attachable = [
+        p for p in gif_files()
+        if p.stat().st_size <= MAX_RESEND_BYTES
+    ]
+    return random.choice(attachable) if attachable else None
 
 
 def _url_safe_name(name: str) -> str:

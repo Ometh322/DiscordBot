@@ -27,7 +27,7 @@ class Gifs(commands.Cog):
         name="gif",
         description="Загрузить гифку для сообщений «Сейчас играет»",
     )
-    @app_commands.describe(file="Картинка: gif, apng, png, jpg, webp (до 8 МБ)")
+    @app_commands.describe(file="Картинка: gif, apng, png, jpg, webp (до 32 МБ)")
     @app_commands.guild_only()
     async def gif(self, interaction: discord.Interaction, file: discord.Attachment):
         ext = Path(file.filename).suffix.lower()
@@ -38,7 +38,7 @@ class Gifs(commands.Cog):
             return
         if file.size > MAX_GIF_BYTES:
             await interaction.response.send_message(
-                "Файл больше 8 МБ — сожми гифку.", ephemeral=True
+                "Файл больше 32 МБ — сожми гифку.", ephemeral=True
             )
             return
 
