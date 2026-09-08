@@ -3,30 +3,57 @@
 import asyncio
 import logging
 import random
-from collections import deque
 from typing import Literal
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from services.catalog import Catalog
 from services.player import PlayerControls, PlayerManager, fmt_duration
-from services.soundcloud import SEARCH_QUERIES, SoundCloud, SoundCloudError
+from services.soundcloud import (
+    SEARCH_QUERIES,
+    SoundCloud,
+    SoundCloudError,
+    detect_lang,
+    is_gachi,
+)
 
 log = logging.getLogger(__name__)
 
-# Сколько последних треков сервера не повторять при случайной выборке
-RECENT_MAX = 60
-# Случайная страница выдачи для разнообразия
+# Случайная страница выдачи для разнообразия сетевого поиска
 SEARCH_OFFSETS = (0, 10, 20, 30)
+WARMUP_MIN_PER_LANG = 30  # до скольких треков прогревать каталог при старте
 
 
 class Music(commands.Cog):
     def __init__(self, bot: discord.Client):
         self.bot = bot
         self.sc = SoundCloud()
+        self.catalog = Catalog()
         self.players = PlayerManager(bot, self.sc)
-        self._recent = {}  # guild_id -> deque[track_id] (история против повторов)
+
+    async def cog_load(self):
+        asyncio.get_running_loop().create_task(self._warmup_catalog())
+
+    async def _warmup_catalog(self):
+        """Фоновый прогрев: если языка мало в каталоге — ищем и добавляем."""
+        try:
+            await self.bot.wait_until_ready()
+        except RuntimeError:
+            return  # бот не запущен (тестовый прогон)
+        for lang in ("ru", "ang"):
+            if await asyncio.to_thread(self.catalog.count, lang) >= WARMUP_MIN_PER_LANG:
+                continue
+            query = random.choice(SEARCH_QUERIES[lang])
+            try:
+                tracks = await asyncio.to_thread(self.sc.search, query, count=30)
+            except SoundCloudError as e:
+                log.warning("Прогрев каталога %s: %s", lang, e)
+                continue
+            added = await asyncio.to_thread(self.catalog.upsert, tracks, lang)
+            log.info("Каталог %s: +%d (всего %d)", lang, added,
+                     await asyncio.to_thread(self.catalog.count, lang))
 
     # ---- вспомогательное ----
 
@@ -82,6 +109,16 @@ class Music(commands.Cog):
             return
         track = tracks[0]
 
+        # GACHI-треки с такого поиска тоже копим в каталог
+        gachi_found = [t for t in tracks if is_gachi(t)]
+        if gachi_found:
+            by_lang = {"ru": [], "ang": []}
+            for t in gachi_found:
+                by_lang[detect_lang(t)].append(t)
+            for l, group in by_lang.items():
+                if group:
+                    await asyncio.to_thread(self.catalog.upsert, group, l)
+
         if not await self._connect_to_author(interaction):
             return
 
@@ -126,38 +163,50 @@ class Music(commands.Cog):
         await interaction.response.defer()
         player = self.players.get(interaction.guild)
         player.text_channel = interaction.channel
-        recent = self._recent.setdefault(
-            interaction.guild_id, deque(maxlen=RECENT_MAX)
+        lang = "ru" if language == "ru" else "ang"
+
+        # 1) Быстрая выборка из локального каталога
+        picked = await asyncio.to_thread(
+            self.catalog.pick, lang, count, interaction.guild_id
         )
 
-        # Случайные вариации запроса + случайная страница выдачи; поиск параллельно
-        pool = SEARCH_QUERIES["ru" if language == "ru" else "ang"]
-        queries = random.sample(pool, k=min(2, len(pool)))
-        offset = random.choice(SEARCH_OFFSETS)
+        # 2) Если каталог дал мало — сеть (параллельные вариации запроса)
+        last_error = None
+        if len(picked) < count:
+            pool = SEARCH_QUERIES[lang]
+            queries = random.sample(pool, k=min(2, len(pool)))
+            offset = random.choice(SEARCH_OFFSETS)
 
-        results = await asyncio.gather(
-            *(
-                asyncio.to_thread(self.sc.search, q, count=20, offset=offset)
-                for q in queries
-            ),
-            return_exceptions=True,
-        )
-        candidates, last_error = [], None
-        for res in results:
-            if isinstance(res, BaseException):
-                last_error = res
-                continue
-            candidates.extend(res)
+            results = await asyncio.gather(
+                *(
+                    asyncio.to_thread(self.sc.search, q, count=20, offset=offset)
+                    for q in queries
+                ),
+                return_exceptions=True,
+            )
+            candidates, last_error = [], None
+            for res in results:
+                if isinstance(res, BaseException):
+                    last_error = res
+                    continue
+                candidates.extend(res)
 
-        # Дедупликация + отсев недавно игравшего
-        unique = {}
-        for t in candidates:
-            unique.setdefault(t.full_id, t)
-        fresh = [t for t in unique.values() if t.full_id not in recent]
-        if not fresh and unique:  # всё уже играло — лучше повтор, чем пустота
-            fresh = list(unique.values())
-        random.shuffle(fresh)
-        picked = fresh[:count]
+            # Всё найденное — в каталог (он растёт сам)
+            if candidates:
+                await asyncio.to_thread(self.catalog.upsert, candidates, lang)
+
+            recent = await asyncio.to_thread(
+                self.catalog.recent_ids, interaction.guild_id
+            )
+            already = {t.track_id for t in picked}
+            fresh = [
+                t for t in candidates
+                if t.track_id not in recent and t.track_id not in already
+            ]
+            if not fresh and candidates:  # всё играло — лучше повтор, чем пустота
+                fresh = [t for t in candidates if t.track_id not in already]
+            random.shuffle(fresh)
+            picked.extend(fresh[: count - len(picked)])
 
         if not picked:
             msg = f"❌ SoundCloud недоступен: {last_error}" if last_error \
@@ -169,8 +218,8 @@ class Music(commands.Cog):
         if not await self._connect_to_author(interaction):
             return
 
+        await asyncio.to_thread(self.catalog.mark_played, interaction.guild_id, picked)
         for t in picked:
-            recent.append(t.full_id)
             await player.enqueue(t)
 
         lines = [

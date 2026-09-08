@@ -82,6 +82,11 @@ def is_gachi(track: Track) -> bool:
     return bool(GACHI_RE.search(f"{track.artist} {track.title}"))
 
 
+def detect_lang(track: Track) -> str:
+    """Язык трека для каталога: кириллическая гачи — ru, иначе ang."""
+    return "ru" if "гачи" in f"{track.artist} {track.title}".lower() else "ang"
+
+
 class SoundCloud:
     """Синхронный клиент. Каждый вызов создаёт свой YoutubeDL, поэтому
     параллельные вызовы из нескольких потоков безопасны (client_id
