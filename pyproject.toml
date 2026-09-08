@@ -10,7 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "discord-py[voice] (>=2.6,<3)",
     "yt-dlp (>=2025.10)",
-    "python-dotenv (>=1.0)"
+    "python-dotenv (>=1.0)",
+    "imageio-ffmpeg (>=0.5)"
 ]
 
 [tool.poetry]

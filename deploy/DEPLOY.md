@@ -25,9 +25,12 @@ scp -r data/ user@VM:/opt/discordbot/
 
 ```ini
 DISCORD_TOKEN=токен_бота_из_Developer_Portal
-FFMPEG_PATH=ffmpeg        # на Linux ffmpeg ставится в PATH
 # WELCOME_VOLUME=10       # громкость приветствий (множитель), опционально
 ```
+
+FFmpeg указывать не нужно: бинарь ставится через pip вместе с зависимостями
+(пакет `imageio-ffmpeg`) — и на Linux, и на Windows. Если очень хочется
+использовать системный — задай `FFMPEG_PATH=ffmpeg` (или полный путь).
 
 **Требования к боту в Discord Developer Portal** (делается один раз,
 независимо от машины): включены intents **Server Members** и **Voice States**
@@ -48,8 +51,8 @@ bash deploy/install.sh
 venv/bin/python bot.py
 ```
 
-`install.sh` ставит `python3-venv`, `ffmpeg`, создаёт окружение из
-`requirements.txt` и корректно выставляет `FFMPEG_PATH` в `.env`.
+`install.sh` ставит `python3-venv` и `git`, создаёт окружение из
+`requirements.txt` — FFmpeg приезжает вместе с ними (пакет `imageio-ffmpeg`).
 
 ---
 
@@ -92,11 +95,10 @@ sudo docker compose logs -f    # живой лог
 
 Что делает `docker-compose.yml`:
 
-- собирает образ по `deploy/Dockerfile` (внутри — Python 3.12-slim, FFmpeg,
-  зависимости из `requirements.txt`);
-- подхватывает переменные из корневого `.env`, перекрывая `FFMPEG_PATH=ffmpeg`
-  (виндовый путь из локального `.env` внутри контейнера не работает);
-- монтирует `../data` в контейнер — звуки приветствий и SQLite-каталог
+- собирает образ по `deploy/Dockerfile` (внутри — Python 3.12-slim и
+  зависимости из `requirements.txt`, FFmpeg входит в них);
+- подхватывает переменные из корневого `.env`;
+- монтирует `../data` в контейнер — звуки, гифки и SQLite-каталог
   живут на хосте и переживают пересборку;
 - `restart: unless-stopped` — автоподъём после падения и перезапуска ВМ.
 
@@ -128,7 +130,7 @@ sudo systemctl restart discordbot          # для способа 2
   сетью.
 - **Бот не стартует с ошибкой PrivilegedIntentsRequired** — в Developer
   Portal не включён Server Members Intent (см. «Общее»).
-- **Где данные?** Всё состояние — в `data/` (`sounds/`, `db.sqlite`).
+- **Где данные?** Всё состояние — в `data/` (`sounds/`, `gifs/`, `db.sqlite`).
   Бэкап = скопировать эту папку.
-- **Windows-путь FFmpeg в `.env`** — на ВМ он не нужен: `install.sh`
-  и `docker-compose.yml` сами ставят `FFMPEG_PATH=ffmpeg`.
+- **FFmpeg** ставится через pip (`imageio-ffmpeg`) — ни `apt`, ни ручных путей
+  не требуется; `FFMPEG_PATH` в `.env` нужен только для системного бинаря.

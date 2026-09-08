@@ -16,8 +16,16 @@ load_dotenv(BASE_DIR / ".env")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 
-# Путь к FFmpeg; по умолчанию — из PATH (работает после перезапуска системы).
-FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg").strip()
+# Путь к FFmpeg. Если не задан в .env — берём бинарь из пакета
+# imageio-ffmpeg (ставится через pip), последняя попытка — PATH.
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "").strip()
+if not FFMPEG_PATH:
+    try:
+        import imageio_ffmpeg
+
+        FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        FFMPEG_PATH = "ffmpeg"
 
 # Громкость приветствий (множитель): 10 = сильно громче; усиление делается
 # фильтром FFmpeg с лимитером — без жёсткого цифрового перегруза

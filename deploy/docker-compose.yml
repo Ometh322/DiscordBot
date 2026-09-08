@@ -8,9 +8,6 @@ services:
     # .env лежит в корне репозитория
     env_file:
       - ../.env
-    environment:
-      # внутри контейнера ffmpeg в PATH (перекрывает виндовый путь из .env)
-      FFMPEG_PATH: ffmpeg
     volumes:
-      # звуки приветствий и SQLite-каталог живут на хосте
+      # звуки приветствий, гифки и SQLite-каталог живут на хосте
       - ../data:/app/data

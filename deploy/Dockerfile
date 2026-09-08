@@ -1,9 +1,6 @@
-# Образ бота: Python 3.12 + FFmpeg (голос) + зависимости из requirements.txt
+# Образ бота: Python 3.12 + зависимости из requirements.txt
+# (FFmpeg ставится вместе с ними — пакет imageio-ffmpeg приносит бинарь)
 FROM python:3.12-slim
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
