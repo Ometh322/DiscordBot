@@ -138,11 +138,12 @@ class Music(commands.Cog):
         )
         embed.url = track.page_url
         gif = attach_random_gif(embed)
+        extra = {"file": gif} if gif else {}  # file=None отправлять нельзя
         await safe_followup(interaction,
             "▶ Играю" if position == 1 else f"➕ В очереди (позиция {position})",
             embed=embed,
             view=PlayerControls(player),
-            file=gif,
+            **extra,
         )
 
     # ---- /gachi ----
@@ -243,11 +244,12 @@ class Music(commands.Cog):
             description="\n".join(lines),
         )
         gif = attach_random_gif(embed)
+        extra = {"file": gif} if gif else {}  # file=None отправлять нельзя
         await safe_followup(interaction,
             "▶ Первый уже играет" if len(picked) > 1 else "▶ Играю",
             embed=embed,
             view=PlayerControls(player),
-            file=gif,
+            **extra,
         )
 
     # ---- /skip ----

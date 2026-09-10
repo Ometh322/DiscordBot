@@ -145,26 +145,36 @@ Discord блокируется на стороне провайдера; гей�
 
 Лечение: для доменов Discord — отдельная, «мягкая» стратегия без дублирования
 пакетов. В `/opt/zapret/config` замените `NFQWS_OPT` на два блока —
-первый (приоритетный) только для Discord, второй для всего остального:
+первый (приоритетный) для доменов бота (Discord + SoundCloud), второй
+для всего остального:
 
 ```
 NFQWS_OPT="
---filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-discord.txt --new
---filter-tcp=443 --dpi-desync=multidisorder --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-user.txt --hostlist-exclude=/opt/zapret/ipset/zapret-hosts-discord.txt --new
+--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-bot.txt --new
+--filter-tcp=443 --dpi-desync=multidisorder --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-user.txt --hostlist-exclude=/opt/zapret/ipset/zapret-hosts-bot.txt --new
 "
 ```
 
-И создайте файл списка доменов Discord:
+И создайте файл списка доменов, с которыми работает бот:
 
 ```bash
-cat >/opt/zapret/ipset/zapret-hosts-discord.txt <<'EOF'
+cat >/opt/zapret/ipset/zapret-hosts-bot.txt <<'EOF'
 discord.com
 discord.gg
 discordapp.com
 discordapp.net
 discord.media
+soundcloud.com
+sndcdn.com
+soundcloud.cloud
 EOF
 ```
+
+SoundCloud с российских IP тоже блокируется (в логах бота это выглядит как
+`SSL handshake timed out` при поиске/запуске трека) — поэтому его домены
+в том же «мягком» списке. Если бот играет из каталога, но треки не
+стримятся — обход для `sndcdn.com`/`soundcloud.cloud` не работает,
+подбирайте для них стратегию отдельно.
 
 Уберите эти домены из `zapret-hosts-user.txt` (если добавляли), затем
 перезапустите обход:
@@ -184,3 +194,11 @@ systemctl restart zapret    # или /opt/zapret/init.d/sysv/zapret restart
 в логе будет строка `defer не прошёл … возраст interaction`. Если такие
 строки сыпятся часто — стратегия для discord-доменов всё ещё тяжеловата,
 поменяйте её через blockcheck.
+
+Ещё одна причина «просроченных» interaction'ов — **отстающие часы ВМ**
+(окно ответа Discord считает сервер по своему времени). Проверка и фикс:
+
+```bash
+timedatectl                      # «synchronized: yes»? «+0.5s» в порядке?
+sudo timedatectl set-ntp true    # включить синхронизацию, если выключена
+```

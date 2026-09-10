@@ -255,9 +255,10 @@ class GuildPlayer:
         embed.set_footer(text=f"Длительность: {fmt_duration(t.duration)}")
         embed.url = t.page_url
         gif = attach_random_gif(embed)
+        extra = {"file": gif} if gif else {}  # file=None отправлять нельзя
         try:
             await self.text_channel.send(
-                embed=embed, file=gif, view=PlayerControls(self)
+                embed=embed, view=PlayerControls(self), **extra
             )
         except (discord.HTTPException, AttributeError):
             log.exception("Не удалось отправить 'Сейчас играет'")
