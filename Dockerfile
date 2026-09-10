@@ -16,12 +16,12 @@ COPY pyproject.toml poetry.lock ./
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
-    poetry install --without dev --no-root
+    poetry install --only main --no-root
 
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/pypoetry \
-    poetry install --without dev
+    poetry install --only main
 
 
 FROM python:3.12-slim-bookworm AS runtime
