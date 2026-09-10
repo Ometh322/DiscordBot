@@ -40,4 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app /app
 
-CMD ["python", "-m", "bot.py"]
+# bot.py — имя файла: запуск скриптом, БЕЗ -m (флаг -m ждёт имя модуля,
+# с "bot.py" падает с ModuleNotFoundError)
+CMD ["python", "-u", "bot.py"]
