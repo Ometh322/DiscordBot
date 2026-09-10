@@ -176,6 +176,30 @@ SoundCloud с российских IP тоже блокируется (в лог
 стримятся — обход для `sndcdn.com`/`soundcloud.cloud` не работает,
 подбирайте для них стратегию отдельно.
 
+**Docker + zapret: только host-сеть.** `docker-compose.yml` уже использует
+`network_mode: host`. Стратегии blockcheck подбираются для трафика хоста;
+через Docker-NAT (`docker0` → POSTNAT) DPI-трюки часто не срабатывают —
+симптом: `Connection reset by peer` из контейнера при работающем curl
+с хоста. Диагностика:
+
+```bash
+# с хоста (должно вернуть HTTP-код, а не ошибку):
+curl -sS --max-time 10 https://soundcloud.com/ -o /dev/null -w "%{http_code}\n"
+# из контейнера:
+sudo docker compose exec bot python -c \
+  "import urllib.request; print(urllib.request.urlopen('https://soundcloud.com', timeout=10).status)"
+```
+
+Если с хоста работает, а из контейнера нет — проверьте, что контейнер
+пересоздан с host-сетью: `sudo docker compose up -d --force-recreate`
+(изменение сети применяется только при пересоздании).
+
+Если и с хоста не работает — стратегия для soundcloud не подходит:
+прогоните `/opt/zapret/blockcheck.sh` по `soundcloud.com` и возьмите
+вариант из колонки TLS 1.2 без `disorder`/`dup`/`oob` (например, из
+вашего отчёта работал `multisplit --split-pos=10,midsld
+--split-seqovl=1`) и пропишите его в первый блок `NFQWS_OPT`.
+
 Уберите эти домены из `zapret-hosts-user.txt` (если добавляли), затем
 перезапустите обход:
 

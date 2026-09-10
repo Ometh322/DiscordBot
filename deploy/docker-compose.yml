@@ -5,6 +5,9 @@ services:
       dockerfile: deploy/Dockerfile
     container_name: gachi-bot
     restart: unless-stopped
+    # host-сеть: без Docker-NAT. Критично при обходе блокировок (zapret):
+    # DPI-трюки подбираются для трафика хоста и через docker-NAT часто ломаются
+    network_mode: host
     # .env лежит в корне репозитория
     env_file:
       - ../.env
