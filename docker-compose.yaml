@@ -7,6 +7,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_DIR=/app/data
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     env_file:
       - .env
     volumes:
