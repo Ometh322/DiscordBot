@@ -15,6 +15,7 @@ from services.gifs import (
     _url_safe_name,
     gif_files,
 )
+from services.interactions import safe_defer, safe_followup
 
 log = logging.getLogger(__name__)
 
@@ -52,16 +53,16 @@ class Gifs(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await safe_defer(interaction)
         try:
             await file.save(config.GIFS_DIR / name)
         except (discord.HTTPException, OSError) as e:
             log.exception("Сохранение гифки %s", name)
-            await interaction.followup.send(f"❌ Не удалось сохранить: {e}")
+            await safe_followup(interaction,f"❌ Не удалось сохранить: {e}")
             return
 
         action = "обновлена" if exists else "сохранена"
-        await interaction.followup.send(
+        await safe_followup(interaction,
             f"🖼 Гифка **{name}** {action} — теперь появится в ротации "
             f"(всего: {len(gif_files())})."
         )

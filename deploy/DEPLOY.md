@@ -134,3 +134,53 @@ sudo systemctl restart discordbot          # для способа 2
   Бэкап = скопировать эту папку.
 - **FFmpeg** ставится через pip (`imageio-ffmpeg`) — ни `apt`, ни ручных путей
   не требуется; `FFMPEG_PATH` в `.env` нужен только для системного бинаря.
+
+## Запуск из России (блокировка Discord, обход через zapret)
+
+Discord блокируется на стороне провайдера; гейтвей-вебсокет через zapret
+работает, но короткие REST-запросы (ответ на слэш-команду) обязаны укладываться
+в **3 секунды** — агрессивные стратегии вроде `multidisorder` (дублирование
+сегментов) задерживают их, и Discord отвечает
+`404 Unknown interaction (10062)`.
+
+Лечение: для доменов Discord — отдельная, «мягкая» стратегия без дублирования
+пакетов. В `/opt/zapret/config` замените `NFQWS_OPT` на два блока —
+первый (приоритетный) только для Discord, второй для всего остального:
+
+```
+NFQWS_OPT="
+--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-discord.txt --new
+--filter-tcp=443 --dpi-desync=multidisorder --dpi-desync-split-pos=2 --hostlist=/opt/zapret/ipset/zapret-hosts-user.txt --hostlist-exclude=/opt/zapret/ipset/zapret-hosts-discord.txt --new
+"
+```
+
+И создайте файл списка доменов Discord:
+
+```bash
+cat >/opt/zapret/ipset/zapret-hosts-discord.txt <<'EOF'
+discord.com
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+EOF
+```
+
+Уберите эти домены из `zapret-hosts-user.txt` (если добавляли), затем
+перезапустите обход:
+
+```bash
+systemctl restart zapret    # или /opt/zapret/init.d/sysv/zapret restart
+```
+
+Подбор стратегии: прогоните `/opt/zapret/blockcheck.sh` для `discord.com`
+(и `discord.gg`), в списке работающих выбирайте варианты **без** `disorder`,
+`dup`, `oob` — они дублируют/ломают сегменты и калечат короткие REST-запросы.
+`multisplit`, `fake`, `split` — подходят. Итоговый вариант пропишите в
+первый блок `NFQWS_OPT` выше.
+
+Бот со своей стороны устойчив к редким «протухшим» interaction'ам:
+команда выполнится (музыка заиграет), даже если красивый ответ не ушёл —
+в логе будет строка `defer не прошёл … возраст interaction`. Если такие
+строки сыпятся часто — стратегия для discord-доменов всё ещё тяжеловата,
+поменяйте её через blockcheck.

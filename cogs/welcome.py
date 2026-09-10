@@ -28,6 +28,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from services.interactions import safe_defer, safe_followup
 from services.player import GuildPlayer
 
 log = logging.getLogger(__name__)
@@ -303,12 +304,12 @@ class Welcome(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=False)
+        await safe_defer(interaction, ephemeral=False)
         try:
             await file.save(config.SOUNDS_DIR / name)
         except (discord.HTTPException, OSError) as e:
             log.exception("Сохранение звука %s", name)
-            await interaction.followup.send(f"❌ Не удалось сохранить: {e}")
+            await safe_followup(interaction,f"❌ Не удалось сохранить: {e}")
             return
 
         stem = Path(name).stem.lower()
@@ -319,7 +320,7 @@ class Welcome(commands.Cog):
         else:
             kind = "без префикса — сыграет только через /hello"
         action = "обновлён" if exists else "сохранён"
-        await interaction.followup.send(
+        await safe_followup(interaction,
             f"✅ **{name}** {action} — {kind}. Всего в папке: {len(_sound_files())}."
         )
 

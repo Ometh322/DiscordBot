@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.gifs import attach_random_gif
+from services.interactions import safe_defer, safe_followup
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +51,14 @@ class Fun(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await safe_defer(interaction)
         roll = random.randint(1, 6)
         embed = discord.Embed(title="🎲 Гачи-рулетка")
 
         if roll <= 4:
             embed.description = random.choice(SAFE_LINES)
             embed.color = discord.Color.green()
-            await interaction.followup.send(embed=embed)
+            await safe_followup(interaction,embed=embed)
             return
 
         # Наказание: random-звук (через модуль приветствий) + гифка
@@ -73,7 +74,7 @@ class Fun(commands.Cog):
         if roll == 5:
             embed.description = random.choice(LIGHT_LINES)
             embed.color = discord.Color.orange()
-            await interaction.followup.send(embed=embed, file=gif)
+            await safe_followup(interaction,embed=embed, file=gif)
             return
 
         # roll == 6: тяжёлое — 10 секунд серверного мута
@@ -87,7 +88,7 @@ class Fun(commands.Cog):
             "" if muted else "\n(мут не вышел — у бота нет прав, свободен)"
         )
         embed.color = discord.Color.red()
-        await interaction.followup.send(embed=embed, file=gif)
+        await safe_followup(interaction,embed=embed, file=gif)
         if muted:
             await asyncio.sleep(10)
             try:

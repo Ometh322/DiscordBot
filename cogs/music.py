@@ -11,6 +11,7 @@ from discord.ext import commands
 
 from services.catalog import Catalog
 from services.gifs import attach_random_gif
+from services.interactions import safe_defer, safe_followup
 from services.player import PlayerControls, PlayerManager, fmt_duration
 from services.soundcloud import (
     SEARCH_QUERIES,
@@ -66,7 +67,7 @@ class Music(commands.Cog):
             if vc is None:
                 await channel.connect()
             elif vc.channel != channel:
-                await interaction.followup.send(
+                await safe_followup(interaction,
                     f"Я сейчас в другом канале ({vc.channel.mention}) — "
                     "подойди туда или попроси /leave."
                 )
@@ -91,7 +92,7 @@ class Music(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await safe_defer(interaction)
         player = self.players.get(interaction.guild)
         player.text_channel = interaction.channel
 
@@ -100,11 +101,11 @@ class Music(commands.Cog):
                 self.sc.search, query, count=10, gachi_only=False
             )
         except SoundCloudError as e:
-            await interaction.followup.send(f"❌ SoundCloud недоступен: {e}")
+            await safe_followup(interaction,f"❌ SoundCloud недоступен: {e}")
             return
 
         if not tracks:
-            await interaction.followup.send(
+            await safe_followup(interaction,
                 f"По запросу «{query}» ничего не нашлось 🤷"
             )
             return
@@ -137,7 +138,7 @@ class Music(commands.Cog):
         )
         embed.url = track.page_url
         gif = attach_random_gif(embed)
-        await interaction.followup.send(
+        await safe_followup(interaction,
             "▶ Играю" if position == 1 else f"➕ В очереди (позиция {position})",
             embed=embed,
             view=PlayerControls(player),
@@ -167,7 +168,7 @@ class Music(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await safe_defer(interaction)
         player = self.players.get(interaction.guild)
         player.text_channel = interaction.channel
         lang = "ru" if language == "ru" else "ang"
@@ -218,7 +219,7 @@ class Music(commands.Cog):
         if not picked:
             msg = f"❌ SoundCloud недоступен: {last_error}" if last_error \
                 else "Не нашлось GACHI-треков, попробуй ещё раз 🤷"
-            await interaction.followup.send(msg)
+            await safe_followup(interaction,msg)
             return
 
         # Подключаемся к каналу автора
@@ -242,7 +243,7 @@ class Music(commands.Cog):
             description="\n".join(lines),
         )
         gif = attach_random_gif(embed)
-        await interaction.followup.send(
+        await safe_followup(interaction,
             "▶ Первый уже играет" if len(picked) > 1 else "▶ Играю",
             embed=embed,
             view=PlayerControls(player),
