@@ -1,0 +1,41 @@
+# Запуск из корня репозитория:
+#   sudo docker compose up -d --build          # обычный старт
+#   sudo docker compose watch                  # режим разработки (держать открытым):
+#                                              # git pull -> код сам обновится и бот перезапустится
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: gachi-bot
+    restart: unless-stopped
+    # host-сеть: без Docker-NAT. Критично при обходе блокировок (zapret):
+    # DPI-трюки подбираются для трафика хоста и через docker-NAT часто ломаются
+    network_mode: host
+    env_file: .env
+    environment:
+      # системный ffmpeg из образа (pip-версия в контейнере сегфолтит)
+      FFMPEG_PATH: ffmpeg
+    volumes:
+      # звуки приветствий, гифки и SQLite-каталог живут на хосте
+      - ./data:/app/data
+    develop:
+      watch:
+        # код: git pull -> файл обновляется в контейнере, бот перезапускается
+        - action: sync+restart
+          path: ./bot.py
+          target: /app/bot.py
+        - action: sync+restart
+          path: ./config.py
+          target: /app/config.py
+        - action: sync+restart
+          path: ./cogs
+          target: /app/cogs
+        - action: sync+restart
+          path: ./services
+          target: /app/services
+        # зависимости/образ: пересборка
+        - action: rebuild
+          path: requirements.txt
+        - action: rebuild
+          path: deploy/Dockerfile

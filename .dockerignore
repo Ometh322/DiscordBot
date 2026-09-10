@@ -1,0 +1,12 @@
+# В образ не попадает: контекст сборки остаётся маленьким и без секретов
+.git
+.venv
+venv
+data
+deploy
+scripts
+__pycache__
+*.pyc
+.env
+.idea
+*.md
