@@ -1,6 +1,11 @@
-# Образ бота: Python 3.12 + зависимости из requirements.txt
-# (FFmpeg ставится вместе с ними — пакет imageio-ffmpeg приносит бинарь)
+# Образ бота: Python 3.12 + системный FFmpeg + зависимости из requirements.txt
 FROM python:3.12-slim
+
+# Дебиановский FFmpeg: проверенная сборка; статический бинарь из
+# imageio-ffmpeg в slim-контейнере падал по SIGSEGV (-11)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

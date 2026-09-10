@@ -11,6 +11,9 @@ services:
     # .env лежит в корне репозитория
     env_file:
       - ../.env
+    environment:
+      # системный ffmpeg из образа (pip-версия в контейнере сегфолтится)
+      FFMPEG_PATH: ffmpeg
     volumes:
       # звуки приветствий, гифки и SQLite-каталог живут на хосте
       - ../data:/app/data
