@@ -1,4 +1,4 @@
-FROM python:3.11-bookworm AS builder
+FROM python:3.12-bookworm AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/pypoetry \
     poetry install --without dev
 
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
