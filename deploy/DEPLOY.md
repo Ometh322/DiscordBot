@@ -82,34 +82,50 @@ sudo systemctl disable --now discordbot  # остановить и снять с
 
 ## Способ 3. Docker
 
+`docker-compose.yml` лежит **в корне репозитория** (не в deploy/ — путям
+watch нужен корень как каталог проекта).
+
 ```bash
 sudo apt update && sudo apt install -y git docker.io docker-compose-v2
 git clone https://github.com/Ometh322/DiscordBot.git /opt/discordbot
 cd /opt/discordbot
 nano .env                      # DISCORD_TOKEN и т.п.
 
-cd deploy
 sudo docker compose up -d --build
 sudo docker compose logs -f    # живой лог
 ```
 
 Что делает `docker-compose.yml`:
 
-- собирает образ по `deploy/Dockerfile` (внутри — Python 3.12-slim и
-  зависимости из `requirements.txt`, FFmpeg входит в них);
-- подхватывает переменные из корневого `.env`;
-- монтирует `../data` в контейнер — звуки, гифки и SQLite-каталог
+- собирает образ по `deploy/Dockerfile` (внутри — Python 3.12-slim, системный
+  FFmpeg из Debian и зависимости из `requirements.txt`);
+- подхватывает переменные из `.env`;
+- монтирует `./data` в контейнер — звуки, гифки и SQLite-каталог
   живут на хосте и переживают пересборку;
+- `network_mode: host` — без Docker-NAT (важно для zapret, см. ниже);
 - `restart: unless-stopped` — автоподъём после падения и перезапуска ВМ.
 
-> Если ваша версия Docker Compose не принимает `env_file: ../.env`
-> (пути выше папки проекта), скопируй `.env` в `deploy/` и убери `../`.
+**Режим разработки (автообновление кода):** в отдельном терминале держи
+запущенным
 
-Обновление на новую версию кода:
+```bash
+sudo docker compose watch
+```
+
+Тогда после `git pull` изменённые файлы сами синхронизируются в контейнер,
+а бот перезапустится (`sync+restart`); смена `requirements.txt` или
+`Dockerfile` вызывает пересборку. Watch работает только пока команда
+запущена — обычный `up -d` за файлами не следит.
+
+> Если ваша версия Docker Compose не принимает `env_file` с путями выше
+> папки проекта — этот совет из старых версий руководства; теперь compose
+> в корне и `env_file: .env`.
+
+Обновление без watch:
 
 ```bash
 cd /opt/discordbot && git pull
-cd deploy && sudo docker compose up -d --build
+sudo docker compose up -d --build
 ```
 
 ---
