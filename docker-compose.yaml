@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+    command: ['python3', 'bot.py']
+
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - .venv/
+            - .git/
+            - __pycache__/
+            - data/
+        - action: rebuild
+          path: pyproject.toml
+        - action: rebuild
+          path: poetry.lock
