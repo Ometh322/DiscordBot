@@ -6,7 +6,7 @@ services:
   bot:
     build:
       context: .
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     container_name: gachi-bot
     restart: unless-stopped
     # host-сеть: без Docker-NAT. Критично при обходе блокировок (zapret):
