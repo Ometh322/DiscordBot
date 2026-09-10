@@ -32,6 +32,7 @@ class GachiBot(commands.Bot):
             log.info("Opus: %s", Encoder.get_opus_version())
         except Exception:
             log.warning("Opus-кодек не загрузился — голос может не работать")
+        log.info("FFmpeg: %s", config.FFMPEG_PATH)
 
         await self.load_extension("cogs.music")
         await self.load_extension("cogs.welcome")

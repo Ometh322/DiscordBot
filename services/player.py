@@ -55,6 +55,7 @@ class GuildPlayer:
         self.text_channel: Optional[discord.abc.Messageable] = None
         self._idle_task: Optional[asyncio.Task] = None
         self._suppress_next = False  # приветствие останавливает трек без смены очереди
+        self._play_retries = 0       # повторы запуска при переподключении голоса
         # учёт позиции текущего трека для возобновления после приветствия
         self._track_started: Optional[float] = None  # monotonic
         self._paused_total: float = 0.0
@@ -216,9 +217,24 @@ class GuildPlayer:
             try:
                 vc.play(source, after=_after)
             except discord.ClientException:
-                log.exception("VoiceClient.play(%s)", track.full_id)
+                # голос переподключается (4006 и т.п.) — трек НЕ сжигаем:
+                # вернём его в голову очереди с той же позицией и подождём
+                self._play_retries += 1
+                if self._play_retries <= 6:
+                    log.warning(
+                        "Голос ещё не готов (попытка %d) — жду 3 с, трек %s возвращён",
+                        self._play_retries, track.full_id,
+                    )
+                    self.queue.insert(0, track)
+                    self._resume_offset = offset  # позиция не теряется
+                    self.current = None
+                    await asyncio.sleep(3)
+                    continue
+                log.exception("VoiceClient.play(%s) — попытки исчерпаны", track.full_id)
                 self.current = None
+                self._play_retries = 0
                 continue
+            self._play_retries = 0
 
             # трек стартовал — начинаем учёт позиции
             self._track_started = time.monotonic()

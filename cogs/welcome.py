@@ -171,6 +171,11 @@ class Welcome(commands.Cog):
             return None
 
         vc = channel.guild.voice_client
+        if vc is not None and not vc.is_connected():
+            # голос переподключается (обрыв 4006 и т.п.) — не лезем,
+            # иначе получим вторую сессию и лавину обрывов
+            return None
+
         player = self._music_player(channel.guild)
         music_interrupted = False
         try:
