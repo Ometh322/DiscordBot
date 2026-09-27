@@ -1,16 +1,15 @@
-"""Звуки приветствия и «бормотание» из data/sounds.
+"""Звуки приветствия из data/sounds.
 
-Два типа файлов по имени:
+Типы файлов по имени:
   welcome_<ник|id>…  — личные приветствия: играют при входе участника
                        в голосовой канал (если файлов несколько — случайный);
                        ник/id — логин, отображаемое имя или ID пользователя
                        в нижнем регистре, без пробелов;
-  random…            — «бормотание»: раз в минуту с вероятностью 20% бот
-                       выдаёт случайный из них в канале, где находится.
+  random…            — пул для /hello (если личного нет) и наказаний
+                       рулетки; по таймеру бот их НЕ играет.
 
 Общее: если играла музыка — она приостанавливается и после звука
-возобновляется с прежней позиции; /hello — своё приветствие, при
-отсутствии случайное бормотание (кулдаун 3 с).
+возобновляется с прежней позиции; /hello — кулдаун 3 с.
 Форматы: mp3, ogg, wav, m4a, flac, opus. Загрузка: /sound (вложением)
 или копированием в папку. Список: /sounds.
 """
@@ -25,7 +24,7 @@ from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 import config
 from services.interactions import safe_defer, safe_followup
@@ -35,10 +34,8 @@ log = logging.getLogger(__name__)
 
 SOUND_EXTENSIONS = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus")
 WELCOME_PREFIX = "welcome"
-MUMBLE_PREFIX = "random"
+MUMBLE_PREFIX = "random"  # пул для /hello и рулетки
 HELLO_COOLDOWN_SECONDS = 3.0
-MUMBLE_INTERVAL_MINUTES = 1
-MUMBLE_CHANCE = 0.20
 MAX_SOUND_BYTES = 10 * 1024 * 1024   # 10 МБ на файл
 MAX_SOUND_FILES = 100                # предохранитель от замусоривания
 
@@ -101,13 +98,7 @@ class Welcome(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._hello_cd = {}      # user_id -> время последнего /hello
-        self._greeting_active = False  # сейчас играет приветствие/бормотание
-
-    async def cog_load(self):
-        self.mumble_loop.start()
-
-    def cog_unload(self):
-        self.mumble_loop.cancel()
+        self._greeting_active = False  # сейчас играет приветствие
 
     # ---- вспомогательное ----
 
@@ -217,30 +208,11 @@ class Welcome(commands.Cog):
             return  # у участника нет своих welcome-файлов — тишина
         await self._run_greeting(after.channel, sound)
 
-    # ---- бормотание ----
-
-    @tasks.loop(minutes=MUMBLE_INTERVAL_MINUTES)
-    async def mumble_loop(self):
-        if random.random() >= MUMBLE_CHANCE:
-            return
-        if not self.bot.is_ready() or self._greeting_active:
-            return
-        for guild in self.bot.guilds:
-            vc = guild.voice_client
-            if not vc or not vc.is_connected() or vc.channel is None:
-                continue
-            if not any(not m.bot for m in vc.channel.members):
-                continue  # в канале одни боты — бормотать некому
-            sound = random_mumble_sound()
-            if sound is not None:
-                await self._run_greeting(vc.channel, sound)
-                break  # один звук за тик на все сервера
-
     # ---- /hello ----
 
     @app_commands.command(
         name="hello",
-        description="Сыграть своё приветствие (или случайное бормотание)",
+        description="Сыграть своё приветствие (или случайный звук)",
     )
     @app_commands.guild_only()
     async def hello(self, interaction: discord.Interaction):
@@ -321,7 +293,7 @@ class Welcome(commands.Cog):
         if stem.startswith(WELCOME_PREFIX):
             kind = "личное приветствие (welcome_…)"
         elif stem.startswith(MUMBLE_PREFIX):
-            kind = "случайное бормотание (random…)"
+            kind = "случайный пул для /hello и рулетки (random…)"
         else:
             kind = "без префикса — сыграет только через /hello"
         action = "обновлён" if exists else "сохранён"
@@ -353,7 +325,7 @@ class Welcome(commands.Cog):
             description="\n".join(lines),
         )
         embed.set_footer(
-            text="welcome_<ник|id>… — личные приветствия; random… — бормотание"
+            text="welcome_<ник|id>… — личные приветствия; random… — для /hello и рулетки"
         )
         await interaction.response.send_message(embed=embed)
 
