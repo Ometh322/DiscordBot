@@ -21,7 +21,7 @@ GACHI_RE = re.compile(r"gachi|гачи|right version", re.IGNORECASE)
 SEARCH_QUERIES = {
     "ru": [
         "гачи", "гачи ремикс", "гачи микс", "гачи музыка", "гачи фонк",
-        "гачи right version",
+        "гачи right version", "gachi", "right version"
     ],
     "ang": [
         "gachi", "gachi remix", "gachimuchi", "gachi mix",
