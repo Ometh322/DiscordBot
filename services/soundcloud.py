@@ -19,10 +19,14 @@ GACHI_RE = re.compile(r"gachi|гачи|right version", re.IGNORECASE)
 
 # Вариации запросов для случайной выборки по языку
 SEARCH_QUERIES = {
-    "ru": ["гачи", "гачи ремикс", "гачи микс", "гачи музыка", "гачи фонк"],
+    "ru": [
+        "гачи", "гачи ремикс", "гачи микс", "гачи музыка", "гачи фонк",
+        "гачи right version",
+    ],
     "ang": [
         "gachi", "gachi remix", "gachimuchi", "gachi mix",
         "gachi mashup", "gachi phonk", "gachi bass boosted",
+        "right version", "right version remix",
     ],
 }
 
