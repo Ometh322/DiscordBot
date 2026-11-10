@@ -7,7 +7,7 @@ from typing import Literal
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from services.catalog import Catalog
 from services.gifs import attach_random_gif
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 # Случайная страница выдачи для разнообразия сетевого поиска
 SEARCH_OFFSETS = (0, 10, 20, 30)
 WARMUP_MIN_PER_LANG = 30  # до скольких треков прогревать каталог при старте
+EMPTY_CHANNEL_CHECK_MINUTES = 5  # период проверки «бот не один ли в канале»
 
 
 class Music(commands.Cog):
@@ -37,6 +38,10 @@ class Music(commands.Cog):
 
     async def cog_load(self):
         asyncio.get_running_loop().create_task(self._warmup_catalog())
+        self.empty_channel_loop.start()
+
+    def cog_unload(self):
+        self.empty_channel_loop.cancel()
 
     async def _warmup_catalog(self):
         """Фоновый прогрев: если языка мало в каталоге — ищем и добавляем."""
@@ -56,6 +61,40 @@ class Music(commands.Cog):
             added = await asyncio.to_thread(self.catalog.upsert, tracks, lang)
             log.info("Каталог %s: +%d (всего %d)", lang, added,
                      await asyncio.to_thread(self.catalog.count, lang))
+
+    # ---- проверка пустого канала ----
+
+    @tasks.loop(minutes=EMPTY_CHANNEL_CHECK_MINUTES)
+    async def empty_channel_loop(self):
+        """Раз в 5 минут: если бот в голосовом канале совсем один —
+        останавливаем плеер и выходим."""
+        welcome = self.bot.get_cog("Welcome")
+        if welcome is not None and getattr(welcome, "_greeting_active", False):
+            return  # звучит приветствие — следующий тик разберётся
+        for guild in list(self.bot.guilds):
+            vc = guild.voice_client
+            if not (vc and vc.is_connected() and vc.channel):
+                continue
+            if any(not m.bot for m in vc.channel.members):
+                continue  # в канале есть живые слушатели
+            channel_name = vc.channel.name
+            player = self.players.get(guild)
+            cleared = player.stop()  # стоп музыки + очистка очереди
+            try:
+                await vc.disconnect(force=True)
+                log.info(
+                    "В канале %s никого, кроме бота — вышел (очищено треков: %d)",
+                    channel_name, cleared,
+                )
+            except Exception:
+                log.exception("Выход из пустого канала %s", channel_name)
+
+    @empty_channel_loop.before_loop
+    async def _wait_ready(self):
+        try:
+            await self.bot.wait_until_ready()
+        except RuntimeError:
+            self.empty_channel_loop.cancel()  # бот не запущен (тестовый прогон)
 
     # ---- вспомогательное ----
 
