@@ -9,3 +9,4 @@ vk_config.v2.json
 data/
 logs/
 .idea/
+__check.py/
