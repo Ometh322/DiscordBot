@@ -139,8 +139,12 @@ class Music(commands.Cog):
             tracks = await asyncio.to_thread(
                 self.sc.search, query, count=10, gachi_only=False
             )
+            if not tracks:  # на SoundCloud пусто — пробуем YouTube
+                tracks = await asyncio.to_thread(
+                    self.sc.search_youtube, query, count=10, gachi_only=False
+                )
         except SoundCloudError as e:
-            await safe_followup(interaction,f"❌ SoundCloud недоступен: {e}")
+            await safe_followup(interaction, f"❌ Поиск недоступен: {e}")
             return
 
         if not tracks:
@@ -218,18 +222,16 @@ class Music(commands.Cog):
             self.catalog.pick, lang, count, interaction.guild_id
         )
 
-        # 2) Если каталог дал мало — сеть (параллельные вариации запроса)
+        # 2) Если каталог дал мало — сеть: SoundCloud + YouTube параллельно
         last_error = None
         if len(picked) < count:
             pool = SEARCH_QUERIES[lang]
-            queries = random.sample(pool, k=min(2, len(pool)))
+            sc_q, yt_q = random.sample(pool, k=min(2, len(pool)))
             offset = random.choice(SEARCH_OFFSETS)
 
             results = await asyncio.gather(
-                *(
-                    asyncio.to_thread(self.sc.search, q, count=20, offset=offset)
-                    for q in queries
-                ),
+                asyncio.to_thread(self.sc.search, sc_q, count=20, offset=offset),
+                asyncio.to_thread(self.sc.search_youtube, yt_q, count=10),
                 return_exceptions=True,
             )
             candidates, last_error = [], None

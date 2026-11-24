@@ -7,6 +7,7 @@ asyncio.to_thread.
 """
 
 import logging
+import random
 import re
 from dataclasses import dataclass
 from typing import List
@@ -21,12 +22,13 @@ GACHI_RE = re.compile(r"gachi|гачи|right version", re.IGNORECASE)
 SEARCH_QUERIES = {
     "ru": [
         "гачи", "гачи ремикс", "гачи микс", "гачи музыка", "гачи фонк",
-        "гачи right version", "gachi", "right version"
+        "гачи right version", "гачимучи ремикс", "гачи трек", "right version",
     ],
     "ang": [
         "gachi", "gachi remix", "gachimuchi", "gachi mix",
         "gachi mashup", "gachi phonk", "gachi bass boosted",
-        "right version", "right version remix",
+        "right version", "right version remix", "gachi edit",
+        "van darkholme remix", "billy herrington remix",
     ],
 }
 
@@ -41,6 +43,9 @@ YDL_OPTS = {
 # Плоский поиск: один API-запрос, без извлечения потоков для каждого трека
 # (полное извлечение происходит только в fresh_url для играющего трека)
 YDL_SEARCH_OPTS = {**YDL_OPTS, "extract_flat": "in_playlist"}
+
+# ytsearch не умеет offset — берём страницу побольше и режем случайное окно
+YT_SEARCH_PAGE = 40
 
 
 class SoundCloudError(Exception):
@@ -62,23 +67,27 @@ class Track:
     artist: str = ""  # uploader
     duration: int = 0  # секунды
     page_url: str = ""
+    source: str = "sc"  # sc | yt
 
     @property
     def full_id(self) -> str:
-        return str(self.track_id)
+        # sc-треки остаются без префикса (совместимость с базой),
+        # чужие платформы префиксуются, чтобы не путались id
+        return self.track_id if self.source == "sc" else f"{self.source}:{self.track_id}"
 
     @property
     def name(self) -> str:
         return f"{self.artist} — {self.title}".strip(" —")
 
     @classmethod
-    def from_entry(cls, entry: dict) -> "Track":
+    def from_entry(cls, entry: dict, source: str = "sc") -> "Track":
         return cls(
             track_id=str(entry.get("id", "")),
             title=entry.get("title", "") or "Без названия",
             artist=entry.get("uploader", "") or entry.get("uploader_id", "") or "",
             duration=int(entry.get("duration") or 0),
             page_url=entry.get("webpage_url", "") or entry.get("url", ""),
+            source=source,
         )
 
 
@@ -123,13 +132,37 @@ class SoundCloud:
             raise ScUnavailable(f"поиск недоступен ({str(e)[:120]})") from e
 
         entries = (info or {}).get("entries") or []
-        tracks = [Track.from_entry(e) for e in entries if e]
+        tracks = [Track.from_entry(e, source="sc") for e in entries if e]
+        if gachi_only:
+            tracks = [t for t in tracks if is_gachi(t)]
+        return tracks
+
+    def search_youtube(
+        self,
+        query: str,
+        count: int = 10,
+        gachi_only: bool = True,
+    ) -> List[Track]:
+        """Поиск по YouTube (yt-dlp, ytsearch). Offset не поддерживается —
+        берём страницу побольше и отрезаем случайное окно для разнообразия."""
+        try:
+            with yt_dlp.YoutubeDL(YDL_SEARCH_OPTS) as ydl:
+                info = ydl.extract_info(f"ytsearch{YT_SEARCH_PAGE}:{query}", download=False)
+        except yt_dlp.utils.DownloadError as e:
+            log.warning("YouTube search '%s' -> %s", query, e)
+            raise ScUnavailable(f"поиск YouTube недоступен ({str(e)[:120]})") from e
+
+        entries = [e for e in ((info or {}).get("entries") or []) if e]
+        if len(entries) > count:
+            start = random.randint(0, len(entries) - count)
+            entries = entries[start:start + count]
+        tracks = [Track.from_entry(e, source="yt") for e in entries]
         if gachi_only:
             tracks = [t for t in tracks if is_gachi(t)]
         return tracks
 
     def fresh_url(self, track: Track) -> str:
-        """Свежая ссылка на аудиопоток (подписи SoundCloud протухают)."""
+        """Свежая ссылка на аудиопоток (подписи протухают — SC и YT alike)."""
         if not track.page_url:
             raise TrackUnavailable(f"нет ссылки на трек ({track.name})")
         try:
@@ -139,7 +172,7 @@ class SoundCloud:
             msg = str(e)
             if "403" in msg or "404" in msg or "unavailable" in msg.lower():
                 raise TrackUnavailable(f"трек недоступен ({track.name})") from e
-            raise ScUnavailable(f"SoundCloud недоступен ({msg[:120]})") from e
+            raise ScUnavailable(f"источник недоступен ({msg[:120]})") from e
 
         url = (info or {}).get("url")
         if not url:

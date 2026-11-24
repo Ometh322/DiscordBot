@@ -81,7 +81,7 @@ class Catalog:
         """Добавляет треки в каталог (существующие не трогает)."""
         now = time.time()
         rows = [
-            (t.track_id, t.title, t.artist, int(t.duration), t.page_url, lang, now)
+            (t.full_id, t.title, t.artist, int(t.duration), t.page_url, lang, now)
             for t in tracks
             if t.track_id and t.page_url
         ]
@@ -139,7 +139,7 @@ class Catalog:
         self._run(lambda con: con.executemany(
             "INSERT OR REPLACE INTO plays (guild_id, track_id, played_at) "
             "VALUES (?,?,?)",
-            [(guild_id, t.track_id, now) for t in tracks if t.track_id],
+            [(guild_id, t.full_id, now) for t in tracks if t.track_id],
         ))
 
     # ---- гачирусы и одобрения ----
@@ -150,7 +150,7 @@ class Catalog:
         self._run(lambda con: con.executemany(
             "INSERT INTO requests (guild_id, user_id, track_id, requested_at) "
             "VALUES (?,?,?,?)",
-            [(guild_id, user_id, t.track_id, now) for t in tracks if t.track_id],
+            [(guild_id, user_id, t.full_id, now) for t in tracks if t.track_id],
         ))
 
     def approvals_add(self, guild_id: int, track_id: str, user_id: int) -> bool:
